@@ -29,33 +29,87 @@ conversations = {}
 clients_db = {}
 current_prices = {}
 
-SYSTEM_PROMPT = """Sen Nargiza - Petro Plast kompaniyasining professional savdo agentisan.
+SYSTEM_PROMPT = """Sen Nargiza - Petro Plast kompaniyasining savdo menedjeri.
 
-QOIDALAR:
-1. O'zbek yoki rus tilida gapir (mijoz qaysi tilda yozsa o'sha tilda)
-2. Professional va samimiy bo'l
-3. Bot ekanligingni aytma
-4. Har javobdan keyin sotuvga yaqinlashtir
+ASOSIY QOIDALAR:
+1. Qisqa yoz - 1-2 jumla, hech qachon ko'p emas
+2. Hech qachon ** yoki markdown ishlatma
+3. Tabiiy, oddiy gapir - do'st kabi
+4. Bot ekanligingni hech qachon aytma
+5. O'zbek yoki rus tilida gapir - mijoz qaysi tilda yozsa
+6. Emoji ishlatma
+7. Imlo xatosiz yoz
+8. Savol bersang - faqat bitta savol ber
 
-MAHSULOTLAR: HDPE, LDPE, LLDPE, PP, PVC, Ikkilamchi polietilen
+MAHSULOTLAR:
+HDPE: 1561, 273, 276, 371
+LDPE: 158, 153, 2019
+LLDPE: 0209
+PP: H030, H110, 21030, block
+PVC, Ikkilamchi polietilen
 
-NARXLAR: {prices}
+MAHSULOT QOLLASH:
+HDPE 1561 - quvur, idish, plyonka. Past bosim.
+LDPE 158 - plyonka, paket, qoplama. Yuqori bosim.
+LLDPE 0209 - stretch plyonka, qishloq xo'jaligi.
+PP H030 - qoplar, to'qilgan mahsulot.
+
+NARXLAR:
+{prices}
 
 AFZALLIKLAR:
-- Haftada 1 kun Toshkent ichida TEKIN yetkazish
+- Haftada 1 kun Toshkent ichida bepul yetkazish
 - 25 kg dan buyurtma
+- Xarakteristika bor
+- Tezkor javob
 
-SAVDO:
-1. Yangi mijoz - ismini so'ra, ehtiyojini bil
-2. Narx so'rasa - narxlardan ayt
-3. Qiziqsa - miqdor, to'lovni so'ra
-4. Issiq lid bo'lsa: "ISSIQ LID: [ism], [mahsulot], [miqdor], [narx], [raqam]" yoz"""
+SAVDO QADAMLARI:
+1. Yangi mijoz yozsa - salom, ismini so'ra
+2. Ism olgach - qaysi mahsulot kerakligini so'ra
+3. Mahsulot olgach - qancha kerakligini so'ra
+4. Miqdor olgach - narx ayt va to'lov turini so'ra
+5. Tayyor bo'lsa - telefon raqamini so'ra
+6. Raqam olgach - ISSIQ LID yuborish
+
+E'TIROZLAR:
+"Qimmat" desa:
+- "Qayerda ko'rdingiz?"
+- Narx aytsa: "Agar men ham o'sha narxda qilsam, olasizmi?"
+- "Ha" desa: "Qancha kerak va qachon?"
+
+"O'ylab ko'raman" desa:
+- "Narxdan tashqari boshqa savol bormi?"
+- "Yo'q" desa: "Qachon qaror qilasiz?"
+
+"Boshqa joy arzon" desa:
+- "Qancha farq bor?"
+- "U yerdan avval olganmisiz?"
+- "Yo'q" desa: "Sinab ko'ring bizni, keyin taqqoslaysiz"
+
+"Shunchaki narx so'radim" desa:
+- "Tushundim. Qaysi mahsulot ishlab chiqarasiz?"
+- Javob bergach: "Oyiga taxminan qancha kerak?"
+
+DOIMIY MIJOZ QILISH:
+- Birinchi sotuvdan 3 kun o'tib: "Salom [ism], xomashyo qanday keldi? Keyingi partiya qachon kerak?"
+- Har hafta: yangi narxlarni yubor
+
+ISSIQ LID - quyidagi ma'lumotlar to'liq bo'lganda yubor:
+ISSIQ LID:
+Ism: [ism]
+Mahsulot: [marka]
+Miqdor: [kg]
+Narx: [so'm/kg]
+To'lov: [naqd/o'tkazma]
+Raqam: [telefon]
+Shahar: [shahar]
+Holat: HOZIR QILING"""
 
 
 def get_prices_text():
     if not current_prices:
         return "Bugungi narxlar kiritilmagan"
-    return "\n".join([f"• {p}: {v:,} so'm/kg" for p, v in current_prices.items()])
+    return "\n".join([f"{p}: {v:,} so'm/kg" for p, v in current_prices.items()])
 
 
 async def get_nargiza_response(chat_id, user_message):
@@ -67,7 +121,7 @@ async def get_nargiza_response(chat_id, user_message):
     try:
         response = claude_client.messages.create(
             model="claude-haiku-4-5-20251001",
-            max_tokens=1000,
+            max_tokens=300,
             system=SYSTEM_PROMPT.format(prices=get_prices_text()),
             messages=conversations[chat_id]
         )
@@ -76,7 +130,7 @@ async def get_nargiza_response(chat_id, user_message):
         return msg
     except Exception as e:
         logger.error(f"Claude error: {e}")
-        return "Kechirasiz, xato. Qaytadan yozing."
+        return "Kechirasiz, texnik nosozlik. Qaytadan yozing."
 
 
 def is_boss(chat_id):
@@ -94,20 +148,28 @@ async def notify_boss(context, message):
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     chat_id = update.effective_chat.id
     if is_boss(chat_id):
-        await update.message.reply_text("Salom Boss!\n/narx - narx kiritish\n/hisobot - hisobot\n/yordam - yordam")
+        await update.message.reply_text(
+            "Salom Boss!\n"
+            "/narx - narx kiritish\n"
+            "/hisobot - hisobot\n"
+            "/mijozlar - mijozlar ro'yxati\n"
+            "/yordam - yordam"
+        )
     else:
-        response = await get_nargiza_response(chat_id, "Salom birinchi marta yozayapman")
+        response = await get_nargiza_response(chat_id, "Salom, birinchi marta yozayapman")
         await update.message.reply_text(response)
         clients_db[chat_id] = {
             "name": update.effective_user.first_name or "",
             "telegram": f"@{update.effective_user.username}" if update.effective_user.username else "",
-            "category": "Yangi"
+            "category": "Yangi",
+            "date": datetime.now().strftime("%Y-%m-%d %H:%M")
         }
 
 
 async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
     chat_id = update.effective_chat.id
     text = update.message.text
+
     if is_boss(chat_id):
         if any(k in text.lower() for k in ['hdpe', 'ldpe', 'pp', 'pvc', 'lldpe']):
             for line in text.strip().split('\n'):
@@ -120,67 +182,132 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
                             if price_str:
                                 current_prices[product] = int(price_str)
             if current_prices:
-                await update.message.reply_text("Narxlar yangilandi!\n" + "\n".join([f"✅ {k}: {v:,}" for k, v in current_prices.items()]))
+                prices_text = "\n".join([f"{k}: {v:,}" for k, v in current_prices.items()])
+                await update.message.reply_text(f"Narxlar yangilandi!\n{prices_text}")
             return
-        await update.message.reply_text(f"✅ Qabul: {text}")
+        await update.message.reply_text(f"Qabul: {text}")
         return
+
     response = await get_nargiza_response(chat_id, text)
     await update.message.reply_text(response)
+
     if "issiq lid" in response.lower():
         c = clients_db.get(chat_id, {})
-        await notify_boss(context, f"🔥 ISSIQ LID!\nIsm: {c.get('name','?')}\nTelegram: {c.get('telegram','')}\nXabar: {text}")
+        await notify_boss(
+            context,
+            f"ISSIQ LID!\n"
+            f"Ism: {c.get('name', '?')}\n"
+            f"Telegram: {c.get('telegram', '')}\n"
+            f"Xabar: {text}"
+        )
+        if chat_id in clients_db:
+            clients_db[chat_id]['category'] = 'Issiq'
 
 
 async def handle_voice(update: Update, context: ContextTypes.DEFAULT_TYPE):
     chat_id = update.effective_chat.id
-    await update.message.reply_text("🎤 Bir daqiqa...")
+    await update.message.reply_text("Bir daqiqa...")
     try:
         file = await context.bot.get_file(update.message.voice.file_id)
         with tempfile.NamedTemporaryFile(suffix='.ogg', delete=False) as tmp:
             await file.download_to_drive(tmp.name)
-            transcript = openai_client.audio.transcriptions.create(model="whisper-1", file=open(tmp.name, "rb"))
+            transcript = openai_client.audio.transcriptions.create(
+                model="whisper-1",
+                file=open(tmp.name, "rb")
+            )
         text = transcript.text
         if text:
             response = await get_nargiza_response(chat_id, text)
-            await update.message.reply_text(f"🎤 {text}\n\n{response}")
+            await update.message.reply_text(f"{text}\n\n{response}")
         else:
             await update.message.reply_text("Tushunmadim, matn yozing.")
     except Exception as e:
         logger.error(f"Voice error: {e}")
-        await update.message.reply_text("Xato. Matn yozing.")
+        await update.message.reply_text("Ovoz xabarni qabul qila olmadim, matn yozing.")
 
 
 async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
     chat_id = update.effective_chat.id
     if is_boss(chat_id):
         context.bot_data['last_photo'] = update.message.photo[-1].file_id
-        await update.message.reply_text("✅ Rasm saqlandi!")
+        await update.message.reply_text("Rasm saqlandi!")
         return
     response = await get_nargiza_response(chat_id, "Mijoz rasm yubordi")
     await update.message.reply_text(response)
     if BOSS_CHAT_ID:
         try:
-            await context.bot.forward_message(chat_id=BOSS_CHAT_ID, from_chat_id=chat_id, message_id=update.message.message_id)
-        except:
-            pass
+            await context.bot.forward_message(
+                chat_id=BOSS_CHAT_ID,
+                from_chat_id=chat_id,
+                message_id=update.message.message_id
+            )
+        except Exception as e:
+            logger.error(f"Photo forward error: {e}")
 
 
 async def cmd_narx(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if not is_boss(update.effective_chat.id): return
-    await update.message.reply_text("Narxlarni yuboring:\nHDPE 1561 - 16700\nLDPE 158 - 15200")
+    if not is_boss(update.effective_chat.id):
+        return
+    await update.message.reply_text(
+        "Narxlarni yuboring:\n"
+        "HDPE 1561 - 16700\n"
+        "LDPE 158 - 15200\n"
+        "PP H030 - 17500"
+    )
 
 
 async def cmd_hisobot(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if not is_boss(update.effective_chat.id): return
-    report = f"📊 {datetime.now().strftime('%Y-%m-%d %H:%M')}\nMijozlar: {len(clients_db)}\n"
+    if not is_boss(update.effective_chat.id):
+        return
+
+    total = len(clients_db)
+    yangi = sum(1 for c in clients_db.values() if c.get('category') == 'Yangi')
+    issiq = sum(1 for c in clients_db.values() if c.get('category') == 'Issiq')
+    sovuq = sum(1 for c in clients_db.values() if c.get('category') == 'Sovuq')
+
+    report = (
+        f"Hisobot — {datetime.now().strftime('%Y-%m-%d %H:%M')}\n\n"
+        f"Jami mijozlar: {total}\n"
+        f"Yangi: {yangi}\n"
+        f"Issiq lid: {issiq}\n"
+        f"Sovuq lid: {sovuq}\n"
+    )
+
     if current_prices:
-        report += "\nNarxlar:\n" + "\n".join([f"• {p}: {v:,}" for p, v in current_prices.items()])
+        report += "\nHozirgi narxlar:\n"
+        report += "\n".join([f"{p}: {v:,} so'm" for p, v in current_prices.items()])
+
     await update.message.reply_text(report)
 
 
+async def cmd_mijozlar(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not is_boss(update.effective_chat.id):
+        return
+
+    if not clients_db:
+        await update.message.reply_text("Hali mijoz yo'q.")
+        return
+
+    text = "Mijozlar:\n\n"
+    for chat_id, c in list(clients_db.items())[-10:]:
+        text += f"{c.get('name', '?')} {c.get('telegram', '')} — {c.get('category', '?')}\n"
+
+    await update.message.reply_text(text)
+
+
 async def cmd_yordam(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if not is_boss(update.effective_chat.id): return
-    await update.message.reply_text("/narx - narx\n/hisobot - hisobot\n/yordam - yordam")
+    if not is_boss(update.effective_chat.id):
+        return
+    await update.message.reply_text(
+        "Buyruqlar:\n"
+        "/narx - narx kiritish\n"
+        "/hisobot - statistika\n"
+        "/mijozlar - so'nggi mijozlar\n"
+        "/yordam - shu menyu\n\n"
+        "Narx kiritish:\n"
+        "HDPE 1561 - 16700\n"
+        "LDPE 158 - 15200"
+    )
 
 
 async def main():
@@ -188,6 +315,7 @@ async def main():
     app.add_handler(CommandHandler("start", start))
     app.add_handler(CommandHandler("narx", cmd_narx))
     app.add_handler(CommandHandler("hisobot", cmd_hisobot))
+    app.add_handler(CommandHandler("mijozlar", cmd_mijozlar))
     app.add_handler(CommandHandler("yordam", cmd_yordam))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_text))
     app.add_handler(MessageHandler(filters.VOICE, handle_voice))
