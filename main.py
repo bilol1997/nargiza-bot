@@ -216,7 +216,14 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
             f"TEXNIK SAVOL:\n"
             f"Mijoz: {c.get('name', '?')} {c.get('telegram', '')}\n"
             f"Xabar: {text}"
-        )
+        )if "narx sorov" in response.lower():
+            c = clients_db.get(chat_id, {})
+            await notify_boss(
+                context,
+                f"NARX SOROV!\n"
+                f"Mijoz: {c.get('name', '?')} {c.get('telegram', '')}\n"
+                f"Xabar: {text}"
+            )
 
 
 async def handle_voice(update: Update, context: ContextTypes.DEFAULT_TYPE):
