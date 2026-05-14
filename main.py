@@ -58,9 +58,7 @@ PET - suv shishasi, ichimlik idishi, qadoqlash
 ANIQ TEXNIK MA'LUMOT (MFI, zichlik, xarakteristika) kerak bo'lsa:
 "Bir daqiqa, texnik ma'lumotni aniqlab beraman" de va Bossga yubor:
 TEXNIK SAVOL: [mijoz ismi], [marka], [qanday ma'lumot kerak]
-NARX YO'Q BO'LSA:
-Narxlar kiritilmagan bo'lsa - "Bir daqiqa, narxni aniqlab beraman" de va yoz:
-NARX SOROV: [mijoz ismi], [mahsulot]
+
 NARXLAR:
 {prices}
 
@@ -217,14 +215,6 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
             f"Mijoz: {c.get('name', '?')} {c.get('telegram', '')}\n"
             f"Xabar: {text}"
         )
-        if "narx sorov" in response.lower():
-            c = clients_db.get(chat_id, {})
-            await notify_boss(
-                context,
-                f"NARX SOROV!\n"
-                f"Mijoz: {c.get('name', '?')} {c.get('telegram', '')}\n"
-                f"Xabar: {text}"
-            )
 
 
 async def handle_voice(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -346,10 +336,7 @@ async def main():
     logger.info("Nargiza ishga tushdi!")
     await app.initialize()
     await app.start()
-    await app.updater.start_polling(
-    allowed_updates=Update.ALL_TYPES,
-    drop_pending_updates=True
-)
+    await app.updater.start_polling(allowed_updates=Update.ALL_TYPES)
     await asyncio.sleep(float('inf'))
 
 
