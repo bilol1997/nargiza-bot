@@ -156,6 +156,7 @@ def build_lead_card(chat_id, phone, response_text):
         if ':' in line:
             key, val = line.split(':', 1)
             details[key.strip()] = val.strip()
+    tolov = details.get("To'lov", '?')
     return (
         f"ISSIQ LID!\n"
         f"Ism: {c.get('name', '?')}\n"
@@ -164,7 +165,7 @@ def build_lead_card(chat_id, phone, response_text):
         f"Marka: {details.get('Marka', '?')}\n"
         f"Miqdor: {details.get('Miqdor', '?')}\n"
         f"Narx: {details.get('Narx', '?')}\n"
-        f"To'lov: {details.get(\"To'lov\", '?')}"
+        f"To'lov: {tolov}"
     )
 
 
