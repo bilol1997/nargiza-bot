@@ -41,18 +41,23 @@ ASOSIY QOIDALAR:
 7. Imlo xatosiz yoz
 8. Savol bersang - faqat bitta savol ber
 
-MAHSULOTLAR:
-HDPE: 1561, 273, 276, 371
-LDPE: 158, 153, 2019
-LLDPE: 0209
-PP: H030, H110, 21030, block
-PVC, Ikkilamchi polietilen
+MAHSULOT BILIMI (nima ishlab chiqarilishini bilasan):
+HDPE - quvur, idish, kanistr, flakon, plyonka, qop, monofilament, ip
+LDPE - yupqa plyonka, paket, laminatsiya, qishloq xo'jaligi plyonkasi
+LLDPE - stretch plyonka, mustahkam paket, qishloq xo'jaligi plyonkasi
+PP homo - qop ip, raffia, BOPP plyonka, to'qilgan qop
+PP block - zarbga chidamli idish, sanoat detallari, qopqoq
+PP random - shaffof idish, tibbiy mahsulot, oziq-ovqat qadoqlash
+PPR - issiq va sovuq suv quvurlari, fittinglar
+ABS - elektronika korpusi, avtomobil detallari, maishiy texnika
+HIPS - muzlatkich qoplamasi, reklama listi, quyma mahsulot
+GPPS - shaffof quyma mahsulot, disposable idish
+PVC - profil, quvur, kabel qoplamasi, oyna romasi
+PET - suv shishasi, ichimlik idishi, qadoqlash
 
-MAHSULOT QOLLASH:
-HDPE 1561 - quvur, idish, plyonka. Past bosim.
-LDPE 158 - plyonka, paket, qoplama. Yuqori bosim.
-LLDPE 0209 - stretch plyonka, qishloq xo'jaligi.
-PP H030 - qoplar, to'qilgan mahsulot.
+ANIQ TEXNIK MA'LUMOT (MFI, zichlik, xarakteristika) kerak bo'lsa:
+"Bir daqiqa, texnik ma'lumotni aniqlab beraman" de va Bossga yubor:
+TEXNIK SAVOL: [mijoz ismi], [marka], [qanday ma'lumot kerak]
 
 NARXLAR:
 {prices}
@@ -61,7 +66,7 @@ AFZALLIKLAR:
 - Haftada 1 kun Toshkent ichida bepul yetkazish
 - 25 kg dan buyurtma
 - Xarakteristika bor
-- Tezkor javob
+- Tezkor javob 24/7
 
 SAVDO QADAMLARI:
 1. Yangi mijoz yozsa - salom, ismini so'ra
@@ -91,8 +96,7 @@ E'TIROZLAR:
 - Javob bergach: "Oyiga taxminan qancha kerak?"
 
 DOIMIY MIJOZ QILISH:
-- Birinchi sotuvdan 3 kun o'tib: "Salom [ism], xomashyo qanday keldi? Keyingi partiya qachon kerak?"
-- Har hafta: yangi narxlarni yubor
+Birinchi sotuvdan 3 kun o'tib: "Salom [ism], xomashyo qanday keldi? Keyingi partiya qachon kerak?"
 
 ISSIQ LID - quyidagi ma'lumotlar to'liq bo'lganda yubor:
 ISSIQ LID:
@@ -152,7 +156,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
             "Salom Boss!\n"
             "/narx - narx kiritish\n"
             "/hisobot - hisobot\n"
-            "/mijozlar - mijozlar ro'yxati\n"
+            "/mijozlar - mijozlar royxati\n"
             "/yordam - yordam"
         )
     else:
@@ -171,7 +175,7 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
     text = update.message.text
 
     if is_boss(chat_id):
-        if any(k in text.lower() for k in ['hdpe', 'ldpe', 'pp', 'pvc', 'lldpe']):
+        if any(k in text.lower() for k in ['hdpe', 'ldpe', 'pp', 'pvc', 'lldpe', 'abs', 'hips', 'gpps', 'pet', 'ppr']):
             for line in text.strip().split('\n'):
                 for sep in ['-', ':']:
                     if sep in line:
@@ -202,6 +206,15 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
         if chat_id in clients_db:
             clients_db[chat_id]['category'] = 'Issiq'
+
+    if "texnik savol" in response.lower():
+        c = clients_db.get(chat_id, {})
+        await notify_boss(
+            context,
+            f"TEXNIK SAVOL:\n"
+            f"Mijoz: {c.get('name', '?')} {c.get('telegram', '')}\n"
+            f"Xabar: {text}"
+        )
 
 
 async def handle_voice(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -266,7 +279,7 @@ async def cmd_hisobot(update: Update, context: ContextTypes.DEFAULT_TYPE):
     sovuq = sum(1 for c in clients_db.values() if c.get('category') == 'Sovuq')
 
     report = (
-        f"Hisobot — {datetime.now().strftime('%Y-%m-%d %H:%M')}\n\n"
+        f"Hisobot - {datetime.now().strftime('%Y-%m-%d %H:%M')}\n\n"
         f"Jami mijozlar: {total}\n"
         f"Yangi: {yangi}\n"
         f"Issiq lid: {issiq}\n"
@@ -275,7 +288,7 @@ async def cmd_hisobot(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     if current_prices:
         report += "\nHozirgi narxlar:\n"
-        report += "\n".join([f"{p}: {v:,} so'm" for p, v in current_prices.items()])
+        report += "\n".join([f"{p}: {v:,} som" for p, v in current_prices.items()])
 
     await update.message.reply_text(report)
 
@@ -285,12 +298,12 @@ async def cmd_mijozlar(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
 
     if not clients_db:
-        await update.message.reply_text("Hali mijoz yo'q.")
+        await update.message.reply_text("Hali mijoz yoq.")
         return
 
     text = "Mijozlar:\n\n"
     for chat_id, c in list(clients_db.items())[-10:]:
-        text += f"{c.get('name', '?')} {c.get('telegram', '')} — {c.get('category', '?')}\n"
+        text += f"{c.get('name', '?')} {c.get('telegram', '')} - {c.get('category', '?')}\n"
 
     await update.message.reply_text(text)
 
@@ -302,7 +315,7 @@ async def cmd_yordam(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "Buyruqlar:\n"
         "/narx - narx kiritish\n"
         "/hisobot - statistika\n"
-        "/mijozlar - so'nggi mijozlar\n"
+        "/mijozlar - songi mijozlar\n"
         "/yordam - shu menyu\n\n"
         "Narx kiritish:\n"
         "HDPE 1561 - 16700\n"
