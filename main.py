@@ -124,7 +124,7 @@ async def get_nargiza_response(chat_id, user_message):
         conversations[chat_id] = conversations[chat_id][-20:]
     try:
         response = claude_client.messages.create(
-            model="claude-haiku-4-5-20251001",
+            model="claude-haiku-4-5",
             max_tokens=300,
             system=SYSTEM_PROMPT.format(prices=get_prices_text()),
             messages=conversations[chat_id]
