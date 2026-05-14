@@ -98,16 +98,10 @@ E'TIROZLAR:
 DOIMIY MIJOZ QILISH:
 Birinchi sotuvdan 3 kun o'tib: "Salom [ism], xomashyo qanday keldi? Keyingi partiya qachon kerak?"
 
-ISSIQ LID - quyidagi ma'lumotlar to'liq bo'lganda yubor:
-ISSIQ LID:
-Ism: [ism]
-Mahsulot: [marka]
-Miqdor: [kg]
-Narx: [so'm/kg]
-To'lov: [naqd/o'tkazma]
-Raqam: [telefon]
-Shahar: [shahar]
-Holat: HOZIR QILING"""
+ISSIQ LID - mijoz raqamini berganda:
+1. Mijozga: "Rahmat! Tez orada bog'lanamiz."
+2. Ichki xabar uchun faqat shu so'zni yoz: ISSIQ LID
+(Kartochkani mijozga ko'rsatma, faqat ISSIQ LID so'zini yoz)"""
 
 
 def get_prices_text():
@@ -197,12 +191,15 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     if "issiq lid" in response.lower():
         c = clients_db.get(chat_id, {})
+        conv = conversations.get(chat_id, [])
+        conv_text = "\n".join([f"{m['role']}: {m['content']}" for m in conv[-10:]])
         await notify_boss(
             context,
-            f"ISSIQ LID!\n"
+            f"🔥 ISSIQ LID!\n"
             f"Ism: {c.get('name', '?')}\n"
-            f"Telegram: {c.get('telegram', '')}\n"
-            f"Xabar: {text}"
+            f"Telegram: {c.get('telegram', '@noma`lum')}\n"
+            f"Chat ID: {chat_id}\n\n"
+            f"Suhbat:\n{conv_text}"
         )
         if chat_id in clients_db:
             clients_db[chat_id]['category'] = 'Issiq'
@@ -336,10 +333,7 @@ async def main():
     logger.info("Nargiza ishga tushdi!")
     await app.initialize()
     await app.start()
-    await app.updater.start_polling(
-    allowed_updates=Update.ALL_TYPES,
-    drop_pending_updates=True
-)
+    await app.updater.start_polling(allowed_updates=Update.ALL_TYPES)
     await asyncio.sleep(float('inf'))
 
 
