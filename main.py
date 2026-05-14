@@ -40,25 +40,25 @@ ASOSIY QOIDALAR:
 6. Emoji ishlatma
 7. Imlo xatosiz yoz
 8. Savol bersang - faqat bitta savol ber
-9. HECH QACHON HDPE, LDPE, LLDPE, PP, PVC, ABS, HIPS, GPPS, PET, PPR kabi kimyoviy nomlarni ishlatma - faqat marka raqami bilan gapir
+9. HECH QACHON HDPE, LDPE, LLDPE, PP, PVC, ABS, PS, HIPS, GPPS, PET kabi kimyoviy nomlarni ishlatma - faqat marka nomi bilan gapir
 
-MARKALAR RO'YXATI (qaysi mahsulot uchun):
-1561, 5000S, F00952, 276-73, TUB-121 - quvur, idish, kanistr, qop, ip
-158, 153, 15803-020 - yupqa plyonka, paket, laminatsiya
-LL6201, 7042 - stretch plyonka, mustahkam paket
-H030, H110, H015, 21030L - qop ip, raffia, to'qilgan qop
-BX3920, BJ356MO - zarbga chidamli idish, qopqoq, sanoat detali
-RP2400, RP340R - shaffof idish, oziq-ovqat qadoqlash
-PPR80 - issiq va sovuq suv quvurlari, fittinglar
-ABS 757, PA-757 - elektronika korpusi, maishiy texnika
-PH-88, 825 - muzlatkich qoplamasi, reklama listi
-525, GPS-500 - shaffof quyma mahsulot, disposable idish
-S-6058, K67 - profil, quvur, kabel qoplamasi
-CB602 - suv shishasi, ichimlik idishi
+BIZDA BOR MARKALAR:
+LDPE: 153 Kazan, 158 Kazan, 108 Kazan, 153 Sibur Tomsk, 158 Sibur Tomsk, 30200 Sibur Tomsk, 0200 Iran, 158 Socar, 158 Belarus, 158 Ufa, 2102 Laleh, 2102 Campaund, 2119 Arya Sasol, 2420D Amir Kabir, 120 LG Korea
+LLDPE: 0120 Shurtan, 0220 Shurtan, 0320 Shurtan, FY920 Shurtan, 20200 Sibur Tomski, 22B02 Iran, 22b03 Iran, 0209 Shazand, 0209 Amir Kabir, LL235 Jam Iran, 0525 Shurtan, 1625 Shurtan
+HDPE: 0760 Shurtan, OY-762 Shurtan, 0754 Shurtan, 1561 Shurtan, Pe 4850 Jam Iran, 2560 Shurtan, J2200 UzKorGas, J2200SA, J2210SB, J2210 UzKorGas, J2210SA, G2200 UzKorGas, 52518 Jam Iran, 52518 Amir Kabir, 293 Kazan, X3 Iran, X5 Iran, X5 Marun, HF-5110 Arya Sasol, 346 Shurtan, FL7000 UzKorGas, FL7000SA, FL7000SB, F7000 MEHR Iran, F7000 ILAM Iran, G5000 UzKorGas, G7000 UzKorGas, A4009 Turkmen, MF5000 UzKorGas, MF5000SA, MF5000SB, 957 Shurtan, B-Y460 Shurtan, B-Y456 Shurtan, BL6200 UzKorGas, BL8301 UzKorGas, BL6200 BAHTAR, BL6200SB, BL6200SA, BL5200 UzKorGas, Bl3 Bahtar, BL3 Jam Iran, BL3 Marun, P-Y342 Shurtan, P-Y456 Shurtan, Pe100 Jam Iran, Pe100 Marun, Gazprom Pe100, Jam 5000s, 03490 Sibur, WC-Y434 Shurtan, WC-Y734 Shurtan, R-0333 Shurtan
+PP: J150, J150SA, J160, 1870, J160SA, J320, J330, J350, J350SA, J350SB, J360, 9928, J360SA, J370, J370SA, JM350, JM370, JM370SA, JM375, JM380, 7760, J550, J550SA, J560, J570, 4826, MT55, B310, B320, B520, FR160, FR160SA, FR170, 2024 China, 2025 China, 253, FR170SA, PP5088, PPZ30, PP382, PP552, Y130, Y120, D30 Turkmen, PP5072, 030 Sibur, PP30 China, 1003 China, 1003 Qizil Qop, 1032 Lukoil, 1035 Lukoil, 1120 Lukoil, 125 Lukoil, 1380 Lukoil, S1003 Lukoil, 68 Lukoil, 273 Lukoil, PND273 Lukoil, 1102 Regal Iran, FO130, FC550, FC550SB, FC150, 200 PPR Hyosung, 4401 PPR, 003 PPR, 100 PPR Hyosung, Sibur 003 Sibex
+ABS: 750SW Kumho Korea, 121HI LG Korea, GP35 Korea, 0150 Iran, 50N Iran, Chimei 757 Taiwan, SAN 80HF Korea
+PS: HIPS 825 Nijnekamsk, HIPS 7240, HIPS 4512 Iran, 525EM Nijnekamsk, G32N GPPS Iran, 500 GPPS, 1551 GPPS, 1540 GPPS Iran, 0402 GPPS Iran, 1161 GPPS Iran
+PVC: PVC Tianye SG5, PVC Tianye SG3, PVC Jontai SG5, PVC Jontai SG8, PVC China MG8, PVC Navoiy SG5, PVC Yuxva
+PET: Pet Jade 8816, Pet Jade 328, Pet Jade 302, PET Wankai 801, PET Wankai 881, PET Wankai 821, EPlAST Pet
+
+MARKA SO'RALGANDA:
+- Yuqoridagi ro'yxatda bo'lsa: "Ha, bor" de va savdo qadamlarini davom ettir
+- Ro'yxatda bo'lmasa: mijozga "Hozir aniqlab beraman, bir daqiqa" de, keyin yangi qatorda FAQAT shu formatda yoz:
+NOMA_LUM_MARKA: [so'ralgan marka nomi]
 
 MIJOZ UMUMIY POLIMER NOMI BILAN SO'RASA (PP bor mi, HDPE bor mi va h.k.):
 - "Ha, qaysi markasi kerak?" de
-- Marka bilmasa: "Qanday mahsulot ishlab chiqarasiz?" de va kerakli markani taklif qil
 
 ANIQ TEXNIK MA'LUMOT (MFI, zichlik, xarakteristika) kerak bo'lsa:
 "Bir daqiqa, texnik ma'lumotni aniqlab beraman" de va Bossga yubor:
@@ -104,10 +104,7 @@ E'TIROZLAR:
 
 "Shunchaki narx so'radim" desa:
 - "Tushundim. Qaysi marka ishlatasan?"
-- Javob bergach: "Oyiga taxminan qancha kerak?"
-
-DOIMIY MIJOZ QILISH:
-Birinchi sotuvdan 3 kun o'tib: "Salom [ism], xomashyo qanday keldi? Keyingi partiya qachon kerak?"""
+- Javob bergach: "Oyiga taxminan qancha kerak?"""
 
 
 def get_prices_text():
@@ -134,7 +131,7 @@ async def get_nargiza_response(chat_id, user_message):
         return msg
     except Exception as e:
         logger.error(f"Claude error: {e}")
-        return "Kechirasiz, texnik nosozlik. Qaytadan yozing."
+        return "Bir daqiqa."
 
 
 def is_boss(chat_id):
@@ -167,6 +164,59 @@ def build_lead_card(chat_id, phone, response_text):
         f"Narx: {details.get('Narx', '?')}\n"
         f"To'lov: {tolov}"
     )
+
+
+def parse_response(response):
+    """Returns (customer_text, markers) where markers is a dict of found internal commands."""
+    lines = response.strip().split('\n')
+    customer_lines = []
+    markers = {}
+    for line in lines:
+        stripped = line.strip()
+        if stripped.upper().startswith('ISSIQ_LID'):
+            markers['issiq_lid'] = response
+        elif stripped.upper().startswith('NOMA_LUM_MARKA:'):
+            markers['noma_lum_marka'] = stripped.split(':', 1)[1].strip()
+        else:
+            customer_lines.append(line)
+    customer_text = '\n'.join(customer_lines).strip()
+    return customer_text, markers
+
+
+async def handle_response(chat_id, text, response, update, context):
+    customer_text, markers = parse_response(response)
+
+    if 'issiq_lid' in markers:
+        await update.message.reply_text("Rahmat, tez orada bog'lanamiz.")
+        await notify_boss(context, build_lead_card(chat_id, text, response))
+        if chat_id in clients_db:
+            clients_db[chat_id]['category'] = 'Issiq'
+        return
+
+    if 'noma_lum_marka' in markers:
+        brand = markers['noma_lum_marka']
+        msg = customer_text or "Hozir aniqlab beraman, bir daqiqa."
+        await update.message.reply_text(msg)
+        c = clients_db.get(chat_id, {})
+        name = c.get('name', '?')
+        tg = c.get('telegram', '')
+        await notify_boss(
+            context,
+            f"Mijoz {brand} so'rayapti. Bor yoki yo'qmi?\nMijoz: {name} {tg}"
+        )
+        return
+
+    if customer_text:
+        await update.message.reply_text(customer_text)
+
+    if "texnik savol" in response.lower():
+        c = clients_db.get(chat_id, {})
+        await notify_boss(
+            context,
+            f"TEXNIK SAVOL:\n"
+            f"Mijoz: {c.get('name', '?')} {c.get('telegram', '')}\n"
+            f"Xabar: {text}"
+        )
 
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -213,23 +263,7 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
 
     response = await get_nargiza_response(chat_id, text)
-
-    if "issiq_lid" in response.lower():
-        await update.message.reply_text("Rahmat, tez orada bog'lanamiz.")
-        await notify_boss(context, build_lead_card(chat_id, text, response))
-        if chat_id in clients_db:
-            clients_db[chat_id]['category'] = 'Issiq'
-    else:
-        await update.message.reply_text(response)
-
-    if "texnik savol" in response.lower():
-        c = clients_db.get(chat_id, {})
-        await notify_boss(
-            context,
-            f"TEXNIK SAVOL:\n"
-            f"Mijoz: {c.get('name', '?')} {c.get('telegram', '')}\n"
-            f"Xabar: {text}"
-        )
+    await handle_response(chat_id, text, response, update, context)
 
 
 async def handle_voice(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -246,18 +280,12 @@ async def handle_voice(update: Update, context: ContextTypes.DEFAULT_TYPE):
         text = transcript.text
         if text:
             response = await get_nargiza_response(chat_id, text)
-            if "issiq_lid" in response.lower():
-                await update.message.reply_text("Rahmat, tez orada bog'lanamiz.")
-                await notify_boss(context, build_lead_card(chat_id, text, response))
-                if chat_id in clients_db:
-                    clients_db[chat_id]['category'] = 'Issiq'
-            else:
-                await update.message.reply_text(f"{text}\n\n{response}")
+            await handle_response(chat_id, text, response, update, context)
         else:
             await update.message.reply_text("Tushunmadim, matn yozing.")
     except Exception as e:
         logger.error(f"Voice error: {e}")
-        await update.message.reply_text("Ovoz xabarni qabul qila olmadim, matn yozing.")
+        await update.message.reply_text("Bir daqiqa.")
 
 
 async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
