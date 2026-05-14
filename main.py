@@ -336,7 +336,10 @@ async def main():
     logger.info("Nargiza ishga tushdi!")
     await app.initialize()
     await app.start()
-    await app.updater.start_polling(allowed_updates=Update.ALL_TYPES)
+    await app.updater.start_polling(
+    allowed_updates=Update.ALL_TYPES,
+    drop_pending_updates=True
+)
     await asyncio.sleep(float('inf'))
 
 
