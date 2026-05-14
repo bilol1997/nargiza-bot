@@ -58,7 +58,9 @@ PET - suv shishasi, ichimlik idishi, qadoqlash
 ANIQ TEXNIK MA'LUMOT (MFI, zichlik, xarakteristika) kerak bo'lsa:
 "Bir daqiqa, texnik ma'lumotni aniqlab beraman" de va Bossga yubor:
 TEXNIK SAVOL: [mijoz ismi], [marka], [qanday ma'lumot kerak]
-
+NARX YO'Q BO'LSA:
+Narxlar kiritilmagan bo'lsa - "Bir daqiqa, narxni aniqlab beraman" de va yoz:
+NARX SOROV: [mijoz ismi], [mahsulot]
 NARXLAR:
 {prices}
 
