@@ -40,20 +40,25 @@ ASOSIY QOIDALAR:
 6. Emoji ishlatma
 7. Imlo xatosiz yoz
 8. Savol bersang - faqat bitta savol ber
+9. HECH QACHON HDPE, LDPE, LLDPE, PP, PVC, ABS, HIPS, GPPS, PET, PPR kabi kimyoviy nomlarni ishlatma - faqat marka raqami bilan gapir
 
-MAHSULOT BILIMI (nima ishlab chiqarilishini bilasan):
-HDPE - quvur, idish, kanistr, flakon, plyonka, qop, monofilament, ip
-LDPE - yupqa plyonka, paket, laminatsiya, qishloq xo'jaligi plyonkasi
-LLDPE - stretch plyonka, mustahkam paket, qishloq xo'jaligi plyonkasi
-PP homo - qop ip, raffia, BOPP plyonka, to'qilgan qop
-PP block - zarbga chidamli idish, sanoat detallari, qopqoq
-PP random - shaffof idish, tibbiy mahsulot, oziq-ovqat qadoqlash
-PPR - issiq va sovuq suv quvurlari, fittinglar
-ABS - elektronika korpusi, avtomobil detallari, maishiy texnika
-HIPS - muzlatkich qoplamasi, reklama listi, quyma mahsulot
-GPPS - shaffof quyma mahsulot, disposable idish
-PVC - profil, quvur, kabel qoplamasi, oyna romasi
-PET - suv shishasi, ichimlik idishi, qadoqlash
+MARKALAR RO'YXATI (qaysi mahsulot uchun):
+1561, 5000S, F00952, 276-73, TUB-121 - quvur, idish, kanistr, qop, ip
+158, 153, 15803-020 - yupqa plyonka, paket, laminatsiya
+LL6201, 7042 - stretch plyonka, mustahkam paket
+H030, H110, H015, 21030L - qop ip, raffia, to'qilgan qop
+BX3920, BJ356MO - zarbga chidamli idish, qopqoq, sanoat detali
+RP2400, RP340R - shaffof idish, oziq-ovqat qadoqlash
+PPR80 - issiq va sovuq suv quvurlari, fittinglar
+ABS 757, PA-757 - elektronika korpusi, maishiy texnika
+PH-88, 825 - muzlatkich qoplamasi, reklama listi
+525, GPS-500 - shaffof quyma mahsulot, disposable idish
+S-6058, K67 - profil, quvur, kabel qoplamasi
+CB602 - suv shishasi, ichimlik idishi
+
+MIJOZ UMUMIY POLIMER NOMI BILAN SO'RASA (PP bor mi, HDPE bor mi va h.k.):
+- "Ha, qaysi markasi kerak?" de
+- Marka bilmasa: "Qanday mahsulot ishlab chiqarasiz?" de va kerakli markani taklif qil
 
 ANIQ TEXNIK MA'LUMOT (MFI, zichlik, xarakteristika) kerak bo'lsa:
 "Bir daqiqa, texnik ma'lumotni aniqlab beraman" de va Bossga yubor:
@@ -70,11 +75,17 @@ AFZALLIKLAR:
 
 SAVDO QADAMLARI:
 1. Yangi mijoz yozsa - salom, ismini so'ra
-2. Ism olgach - qaysi mahsulot kerakligini so'ra
-3. Mahsulot olgach - qancha kerakligini so'ra
-4. Miqdor olgach - narx ayt va to'lov turini so'ra
-5. Tayyor bo'lsa - telefon raqamini so'ra
-6. Raqam olgach - FAQAT "ISSIQ_LID" so'zini yoz (boshqa hech narsa yozma)
+2. Ism olgach - qaysi marka kerakligini so'ra
+3. Marka olgach - qancha kerakligini so'ra
+4. Miqdor olgach - "Narxi bo'yicha kelishamizmi yoki aniq narx kerakmi?" de
+5. Narx kelishilgach - to'lov turini so'ra (naqd yoki bank o'tkazma)
+6. To'lov olgach - telefon raqamini so'ra
+7. Raqam olgach - FAQAT quyidagi formatda yoz, boshqa hech narsa qo'shma:
+ISSIQ_LID
+Marka: [marka]
+Miqdor: [miqdor]
+Narx: [kelishilgan narx]
+To'lov: [to'lov turi]
 
 E'TIROZLAR:
 "Qimmat" desa:
@@ -92,7 +103,7 @@ E'TIROZLAR:
 - "Yo'q" desa: "Sinab ko'ring bizni, keyin taqqoslaysiz"
 
 "Shunchaki narx so'radim" desa:
-- "Tushundim. Qaysi mahsulot ishlab chiqarasiz?"
+- "Tushundim. Qaysi marka ishlatasan?"
 - Javob bergach: "Oyiga taxminan qancha kerak?"
 
 DOIMIY MIJOZ QILISH:
@@ -138,17 +149,22 @@ async def notify_boss(context, message):
             logger.error(f"Boss notify error: {e}")
 
 
-def build_lead_card(chat_id, user_message):
+def build_lead_card(chat_id, phone, response_text):
     c = clients_db.get(chat_id, {})
-    conv = conversations.get(chat_id, [])
-    conv_text = "\n".join([f"{m['role']}: {m['content']}" for m in conv[-10:]])
+    details = {}
+    for line in response_text.strip().split('\n')[1:]:
+        if ':' in line:
+            key, val = line.split(':', 1)
+            details[key.strip()] = val.strip()
     return (
         f"ISSIQ LID!\n"
         f"Ism: {c.get('name', '?')}\n"
-        f"Telegram: {c.get('telegram', 'noma`lum')}\n"
-        f"Chat ID: {chat_id}\n"
-        f"Telefon: {user_message}\n\n"
-        f"Suhbat:\n{conv_text}"
+        f"Telegram: {c.get('telegram', 'nomalum')}\n"
+        f"Telefon: {phone}\n"
+        f"Marka: {details.get('Marka', '?')}\n"
+        f"Miqdor: {details.get('Miqdor', '?')}\n"
+        f"Narx: {details.get('Narx', '?')}\n"
+        f"To'lov: {details.get(\"To'lov\", '?')}"
     )
 
 
@@ -198,10 +214,8 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
     response = await get_nargiza_response(chat_id, text)
 
     if "issiq_lid" in response.lower():
-        # Mijozga faqat oddiy javob, kartochka ko'rsatilmaydi
         await update.message.reply_text("Rahmat, tez orada bog'lanamiz.")
-        # Bossga to'liq ichki kartochka yuboriladi
-        await notify_boss(context, build_lead_card(chat_id, text))
+        await notify_boss(context, build_lead_card(chat_id, text, response))
         if chat_id in clients_db:
             clients_db[chat_id]['category'] = 'Issiq'
     else:
@@ -233,7 +247,7 @@ async def handle_voice(update: Update, context: ContextTypes.DEFAULT_TYPE):
             response = await get_nargiza_response(chat_id, text)
             if "issiq_lid" in response.lower():
                 await update.message.reply_text("Rahmat, tez orada bog'lanamiz.")
-                await notify_boss(context, build_lead_card(chat_id, text))
+                await notify_boss(context, build_lead_card(chat_id, text, response))
                 if chat_id in clients_db:
                     clients_db[chat_id]['category'] = 'Issiq'
             else:
