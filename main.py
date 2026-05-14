@@ -1,6 +1,7 @@
 import os
 import logging
 import asyncio
+from collections import deque
 from datetime import datetime
 import anthropic
 import openai
@@ -29,6 +30,11 @@ conversations = {}
 clients_db = {}
 current_prices = {}
 
+# {customer_chat_id: {'marka': str, 'miqdor': str, 'narx': str}}
+pending_stock_checks = {}
+# FIFO: boss answers in order
+boss_confirmation_queue = deque()
+
 SYSTEM_PROMPT = """Sen Nargiza - Petro Plast kompaniyasining savdo menedjeri.
 
 ASOSIY QOIDALAR:
@@ -52,20 +58,25 @@ PS: HIPS 825 Nijnekamsk, HIPS 7240, HIPS 4512 Iran, 525EM Nijnekamsk, G32N GPPS 
 PVC: PVC Tianye SG5, PVC Tianye SG3, PVC Jontai SG5, PVC Jontai SG8, PVC China MG8, PVC Navoiy SG5, PVC Yuxva
 PET: Pet Jade 8816, Pet Jade 328, Pet Jade 302, PET Wankai 801, PET Wankai 881, PET Wankai 821, EPlAST Pet
 
+NARXLAR (bugungi):
+{prices}
+
 MARKA SO'RALGANDA:
-- Yuqoridagi ro'yxatda bo'lsa: "Ha, bor" de va savdo qadamlarini davom ettir
-- Ro'yxatda bo'lmasa: mijozga "Hozir aniqlab beraman, bir daqiqa" de, keyin yangi qatorda FAQAT shu formatda yoz:
+a. NARXLAR bo'limida narxi ko'rsatilgan bo'lsa: "Ha, [marka] bor. Narxi [narx] so'm/kg. Qancha kerak?"
+b. NARXLAR bo'limida yo'q, lekin BIZDA BOR MARKALAR ro'yxatida bor bo'lsa: "Ha, bor. Qancha kerak?"
+c. Hech birida yo'q bo'lsa: "Hozir aniqlab beraman, bir daqiqa" de, keyin yangi qatorda:
 NOMA_LUM_MARKA: [so'ralgan marka nomi]
 
 MIJOZ UMUMIY POLIMER NOMI BILAN SO'RASA (PP bor mi, HDPE bor mi va h.k.):
 - "Ha, qaysi markasi kerak?" de
 
-ANIQ TEXNIK MA'LUMOT (MFI, zichlik, xarakteristika) kerak bo'lsa:
-"Bir daqiqa, texnik ma'lumotni aniqlab beraman" de va Bossga yubor:
-TEXNIK SAVOL: [mijoz ismi], [marka], [qanday ma'lumot kerak]
+MIQDOR OLGANDAN SO'NG:
+Mijozga "Yaxshi, bir daqiqa" de, keyin yangi qatorda:
+STOK_TEKSHIR: [marka], [miqdor]
 
-NARXLAR:
-{prices}
+ANIQ TEXNIK MA'LUMOT (MFI, zichlik, xarakteristika) kerak bo'lsa:
+"Bir daqiqa, texnik ma'lumotni aniqlab beraman" de, keyin:
+TEXNIK SAVOL: [mijoz ismi], [marka], [qanday ma'lumot kerak]
 
 AFZALLIKLAR:
 - Haftada 1 kun Toshkent ichida bepul yetkazish
@@ -76,16 +87,8 @@ AFZALLIKLAR:
 SAVDO QADAMLARI:
 1. Yangi mijoz yozsa - salom, ismini so'ra
 2. Ism olgach - qaysi marka kerakligini so'ra
-3. Marka olgach - qancha kerakligini so'ra
-4. Miqdor olgach - "Narxi bo'yicha kelishamizmi yoki aniq narx kerakmi?" de
-5. Narx kelishilgach - to'lov turini so'ra (naqd yoki bank o'tkazma)
-6. To'lov olgach - telefon raqamini so'ra
-7. Raqam olgach - FAQAT quyidagi formatda yoz, boshqa hech narsa qo'shma:
-ISSIQ_LID
-Marka: [marka]
-Miqdor: [miqdor]
-Narx: [kelishilgan narx]
-To'lov: [to'lov turi]
+3. Marka olgach - yuqoridagi MARKA SO'RALGANDA qoidasini qo'lla
+4. Miqdor olgach - yuqoridagi MIQDOR OLGANDAN SO'NG qoidasini qo'lla
 
 E'TIROZLAR:
 "Qimmat" desa:
@@ -109,8 +112,26 @@ E'TIROZLAR:
 
 def get_prices_text():
     if not current_prices:
-        return "Bugungi narxlar kiritilmagan"
+        return "Kiritilmagan"
     return "\n".join([f"{p}: {v:,} so'm/kg" for p, v in current_prices.items()])
+
+
+def parse_price_list(text):
+    prices = {}
+    for line in text.strip().split('\n'):
+        line = line.strip()
+        if not line:
+            continue
+        for sep in [' - ', ': ', '-', ':']:
+            if sep in line:
+                parts = line.split(sep, 1)
+                if len(parts) == 2:
+                    brand = parts[0].strip()
+                    price_str = ''.join(filter(str.isdigit, parts[1]))
+                    if price_str and brand:
+                        prices[brand] = int(price_str)
+                        break
+    return prices
 
 
 async def get_nargiza_response(chat_id, user_message):
@@ -146,6 +167,13 @@ async def notify_boss(context, message):
             logger.error(f"Boss notify error: {e}")
 
 
+async def send_customer(context, chat_id, text):
+    try:
+        await context.bot.send_message(chat_id=chat_id, text=text)
+    except Exception as e:
+        logger.error(f"Customer notify error: {e}")
+
+
 def build_lead_card(chat_id, phone, response_text):
     c = clients_db.get(chat_id, {})
     details = {}
@@ -166,21 +194,42 @@ def build_lead_card(chat_id, phone, response_text):
     )
 
 
+def build_stock_lead_card(chat_id, data):
+    c = clients_db.get(chat_id, {})
+    narx_str = f"{data['narx']:,} so'm/kg" if isinstance(data.get('narx'), int) else str(data.get('narx', '?'))
+    return (
+        f"ISSIQ LID!\n"
+        f"Ism: {c.get('name', '?')}\n"
+        f"Telegram: {c.get('telegram', 'nomalum')}\n"
+        f"Marka: {data.get('marka', '?')}\n"
+        f"Miqdor: {data.get('miqdor', '?')}\n"
+        f"Narx: {narx_str}"
+    )
+
+
 def parse_response(response):
-    """Returns (customer_text, markers) where markers is a dict of found internal commands."""
     lines = response.strip().split('\n')
     customer_lines = []
     markers = {}
     for line in lines:
         stripped = line.strip()
-        if stripped.upper().startswith('ISSIQ_LID'):
+        upper = stripped.upper()
+        if upper.startswith('ISSIQ_LID'):
             markers['issiq_lid'] = response
-        elif stripped.upper().startswith('NOMA_LUM_MARKA:'):
+        elif upper.startswith('NOMA_LUM_MARKA:'):
             markers['noma_lum_marka'] = stripped.split(':', 1)[1].strip()
+        elif upper.startswith('STOK_TEKSHIR:'):
+            val = stripped.split(':', 1)[1].strip()
+            parts = val.split(',', 1)
+            markers['stok_tekshir'] = {
+                'marka': parts[0].strip() if parts else val,
+                'miqdor': parts[1].strip() if len(parts) > 1 else '?',
+            }
+        elif upper.startswith('TEXNIK SAVOL:'):
+            markers['texnik_savol'] = stripped.split(':', 1)[1].strip()
         else:
             customer_lines.append(line)
-    customer_text = '\n'.join(customer_lines).strip()
-    return customer_text, markers
+    return '\n'.join(customer_lines).strip(), markers
 
 
 async def handle_response(chat_id, text, response, update, context):
@@ -193,23 +242,42 @@ async def handle_response(chat_id, text, response, update, context):
             clients_db[chat_id]['category'] = 'Issiq'
         return
 
+    if 'stok_tekshir' in markers:
+        data = markers['stok_tekshir']
+        marka = data['marka']
+        miqdor = data['miqdor']
+        narx = current_prices.get(marka, '?')
+        pending_stock_checks[chat_id] = {'marka': marka, 'miqdor': miqdor, 'narx': narx}
+        if chat_id not in boss_confirmation_queue:
+            boss_confirmation_queue.append(chat_id)
+        msg = customer_text or "Yaxshi, bir daqiqa."
+        await update.message.reply_text(msg)
+        c = clients_db.get(chat_id, {})
+        narx_str = f"{narx:,} so'm/kg" if isinstance(narx, int) else "narx kiritilmagan"
+        await notify_boss(
+            context,
+            f"Boss, {marka} narxi o'zgarmadimi? Mavjudmi? Mijoz {miqdor} olmoqchi\n"
+            f"Hozirgi narx: {narx_str}\n"
+            f"Mijoz: {c.get('name', '?')} {c.get('telegram', '')}"
+        )
+        return
+
     if 'noma_lum_marka' in markers:
         brand = markers['noma_lum_marka']
         msg = customer_text or "Hozir aniqlab beraman, bir daqiqa."
         await update.message.reply_text(msg)
         c = clients_db.get(chat_id, {})
-        name = c.get('name', '?')
-        tg = c.get('telegram', '')
         await notify_boss(
             context,
-            f"Mijoz {brand} so'rayapti. Bor yoki yo'qmi?\nMijoz: {name} {tg}"
+            f"Mijoz {brand} so'rayapti. Bor yoki yo'qmi?\n"
+            f"Mijoz: {c.get('name', '?')} {c.get('telegram', '')}"
         )
         return
 
     if customer_text:
         await update.message.reply_text(customer_text)
 
-    if "texnik savol" in response.lower():
+    if 'texnik_savol' in markers:
         c = clients_db.get(chat_id, {})
         await notify_boss(
             context,
@@ -245,20 +313,40 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
     text = update.message.text
 
     if is_boss(chat_id):
-        if any(k in text.lower() for k in ['hdpe', 'ldpe', 'pp', 'pvc', 'lldpe', 'abs', 'hips', 'gpps', 'pet', 'ppr']):
-            for line in text.strip().split('\n'):
-                for sep in ['-', ':']:
-                    if sep in line:
-                        parts = line.split(sep, 1)
-                        if len(parts) == 2:
-                            product = parts[0].strip()
-                            price_str = ''.join(filter(str.isdigit, parts[1]))
-                            if price_str:
-                                current_prices[product] = int(price_str)
-            if current_prices:
-                prices_text = "\n".join([f"{k}: {v:,}" for k, v in current_prices.items()])
-                await update.message.reply_text(f"Narxlar yangilandi!\n{prices_text}")
+        low = text.lower().strip()
+
+        # Narx kiritish rejimi
+        if context.bot_data.get('awaiting_narx'):
+            context.bot_data['awaiting_narx'] = False
+            parsed = parse_price_list(text)
+            if parsed:
+                current_prices.update(parsed)
+                prices_text = "\n".join([f"{k}: {v:,}" for k, v in parsed.items()])
+                await update.message.reply_text(f"Narxlar saqlandi!\n{prices_text}")
+            else:
+                await update.message.reply_text("Format noto'g'ri. Qaytadan /narx yuboring.")
             return
+
+        # Boss tasdiq bermoqda (ha/yo'q)
+        if boss_confirmation_queue:
+            if any(w in low for w in ['ha', 'bor', 'yes', 'ok', 'tasdiqlandi', 'mavjud']):
+                customer_id = boss_confirmation_queue.popleft()
+                data = pending_stock_checks.pop(customer_id, {})
+                await notify_boss(context, build_stock_lead_card(customer_id, data))
+                await send_customer(context, customer_id, "Yaxshi, tez orada bog'lanamiz.")
+                if customer_id in clients_db:
+                    clients_db[customer_id]['category'] = 'Issiq'
+                return
+
+            if any(w in low for w in ["yo'q", 'yoq', 'sotildi', 'tugagan', 'no', 'tugadi']):
+                customer_id = boss_confirmation_queue.popleft()
+                pending_stock_checks.pop(customer_id, None)
+                await send_customer(
+                    context, customer_id,
+                    "Kechirasiz, bu marka hozir tugagan. Boshqa variant ko'rib chiqamizmi?"
+                )
+                return
+
         await update.message.reply_text(f"Qabul: {text}")
         return
 
@@ -310,11 +398,12 @@ async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def cmd_narx(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not is_boss(update.effective_chat.id):
         return
+    context.bot_data['awaiting_narx'] = True
     await update.message.reply_text(
-        "Narxlarni yuboring:\n"
-        "HDPE 1561 - 16700\n"
-        "LDPE 158 - 15200\n"
-        "PP H030 - 17500"
+        "Narxlarni yuboring (har qator alohida):\n\n"
+        "1561 - 12500\n"
+        "0220 - 11000\n"
+        "FR170 - 13000"
     )
 
 
@@ -366,9 +455,9 @@ async def cmd_yordam(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "/hisobot - statistika\n"
         "/mijozlar - songi mijozlar\n"
         "/yordam - shu menyu\n\n"
-        "Narx kiritish:\n"
-        "HDPE 1561 - 16700\n"
-        "LDPE 158 - 15200"
+        "Mijoz stok so'raganda:\n"
+        "Ha/Bor - tasdiq, ISSIQ LID yuboriladi\n"
+        "Yo'q/Sotildi - mijozga tugaganligi aytiladi"
     )
 
 
