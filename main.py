@@ -74,7 +74,7 @@ SAVDO QADAMLARI:
 3. Mahsulot olgach - qancha kerakligini so'ra
 4. Miqdor olgach - narx ayt va to'lov turini so'ra
 5. Tayyor bo'lsa - telefon raqamini so'ra
-6. Raqam olgach - ISSIQ LID yuborish
+6. Raqam olgach - FAQAT "ISSIQ_LID" so'zini yoz (boshqa hech narsa yozma)
 
 E'TIROZLAR:
 "Qimmat" desa:
@@ -96,12 +96,7 @@ E'TIROZLAR:
 - Javob bergach: "Oyiga taxminan qancha kerak?"
 
 DOIMIY MIJOZ QILISH:
-Birinchi sotuvdan 3 kun o'tib: "Salom [ism], xomashyo qanday keldi? Keyingi partiya qachon kerak?"
-
-ISSIQ LID - mijoz raqamini berganda:
-1. Mijozga: "Rahmat! Tez orada bog'lanamiz."
-2. Ichki xabar uchun faqat shu so'zni yoz: ISSIQ LID
-(Kartochkani mijozga ko'rsatma, faqat ISSIQ LID so'zini yoz)"""
+Birinchi sotuvdan 3 kun o'tib: "Salom [ism], xomashyo qanday keldi? Keyingi partiya qachon kerak?"""
 
 
 def get_prices_text():
@@ -123,7 +118,7 @@ async def get_nargiza_response(chat_id, user_message):
             system=SYSTEM_PROMPT.format(prices=get_prices_text()),
             messages=conversations[chat_id]
         )
-        msg = response.content[0].text
+        msg = response.content[0].text.strip()
         conversations[chat_id].append({"role": "assistant", "content": msg})
         return msg
     except Exception as e:
@@ -141,6 +136,20 @@ async def notify_boss(context, message):
             await context.bot.send_message(chat_id=BOSS_CHAT_ID, text=message)
         except Exception as e:
             logger.error(f"Boss notify error: {e}")
+
+
+def build_lead_card(chat_id, user_message):
+    c = clients_db.get(chat_id, {})
+    conv = conversations.get(chat_id, [])
+    conv_text = "\n".join([f"{m['role']}: {m['content']}" for m in conv[-10:]])
+    return (
+        f"ISSIQ LID!\n"
+        f"Ism: {c.get('name', '?')}\n"
+        f"Telegram: {c.get('telegram', 'noma`lum')}\n"
+        f"Chat ID: {chat_id}\n"
+        f"Telefon: {user_message}\n\n"
+        f"Suhbat:\n{conv_text}"
+    )
 
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -187,22 +196,16 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
 
     response = await get_nargiza_response(chat_id, text)
-    await update.message.reply_text(response)
 
-    if "issiq lid" in response.lower():
-        c = clients_db.get(chat_id, {})
-        conv = conversations.get(chat_id, [])
-        conv_text = "\n".join([f"{m['role']}: {m['content']}" for m in conv[-10:]])
-        await notify_boss(
-            context,
-            f"🔥 ISSIQ LID!\n"
-            f"Ism: {c.get('name', '?')}\n"
-            f"Telegram: {c.get('telegram', '@noma`lum')}\n"
-            f"Chat ID: {chat_id}\n\n"
-            f"Suhbat:\n{conv_text}"
-        )
+    if "issiq_lid" in response.lower():
+        # Mijozga faqat oddiy javob, kartochka ko'rsatilmaydi
+        await update.message.reply_text("Rahmat, tez orada bog'lanamiz.")
+        # Bossga to'liq ichki kartochka yuboriladi
+        await notify_boss(context, build_lead_card(chat_id, text))
         if chat_id in clients_db:
             clients_db[chat_id]['category'] = 'Issiq'
+    else:
+        await update.message.reply_text(response)
 
     if "texnik savol" in response.lower():
         c = clients_db.get(chat_id, {})
@@ -228,7 +231,13 @@ async def handle_voice(update: Update, context: ContextTypes.DEFAULT_TYPE):
         text = transcript.text
         if text:
             response = await get_nargiza_response(chat_id, text)
-            await update.message.reply_text(f"{text}\n\n{response}")
+            if "issiq_lid" in response.lower():
+                await update.message.reply_text("Rahmat, tez orada bog'lanamiz.")
+                await notify_boss(context, build_lead_card(chat_id, text))
+                if chat_id in clients_db:
+                    clients_db[chat_id]['category'] = 'Issiq'
+            else:
+                await update.message.reply_text(f"{text}\n\n{response}")
         else:
             await update.message.reply_text("Tushunmadim, matn yozing.")
     except Exception as e:
@@ -333,7 +342,10 @@ async def main():
     logger.info("Nargiza ishga tushdi!")
     await app.initialize()
     await app.start()
-    await app.updater.start_polling(allowed_updates=Update.ALL_TYPES)
+    await app.updater.start_polling(
+        allowed_updates=Update.ALL_TYPES,
+        drop_pending_updates=True,
+    )
     await asyncio.sleep(float('inf'))
 
 
