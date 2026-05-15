@@ -1,9 +1,20 @@
 import os
 import re
+import json
+import time
+import base64
 import logging
+import urllib.parse
 from datetime import datetime
 import anthropic
 import openai
+import requests as _http
+try:
+    from cryptography.hazmat.primitives import hashes, serialization
+    from cryptography.hazmat.primitives.asymmetric import padding as _rsa_padding
+    _CRYPTO_OK = True
+except ImportError:
+    _CRYPTO_OK = False
 from telegram import Update
 from telegram.ext import (
     Application,
@@ -23,6 +34,107 @@ OPENAI_API_KEY = os.environ.get("OPENAI_API_KEY")
 BOSS_CHAT_ID = int(os.environ.get("BOSS_CHAT_ID", "0"))
 claude_client = anthropic.Anthropic(api_key=CLAUDE_API_KEY)
 openai_client = openai.OpenAI(api_key=OPENAI_API_KEY)
+
+# ── Google Sheets ─────────────────────────────────────────────────────────────
+_SHEET_ID = "1VcRgmY8b6CLk-E-DjVS4SBoMfU9qB9nvoc-S-ia_9yk"
+_SHEETS_BASE = f"https://sheets.googleapis.com/v4/spreadsheets/{_SHEET_ID}"
+_token_cache: dict = {"token": None, "exp": 0}
+
+
+def _b64url(data: bytes) -> str:
+    return base64.urlsafe_b64encode(data).rstrip(b"=").decode()
+
+
+def _get_sheets_token() -> str | None:
+    now = int(time.time())
+    if _token_cache["token"] and now < _token_cache["exp"]:
+        return _token_cache["token"]
+    raw = os.environ.get("GOOGLE_CREDENTIALS", "")
+    if not raw or not _CRYPTO_OK:
+        return None
+    try:
+        info = json.loads(raw)
+        info["private_key"] = info["private_key"].replace("\\n", "\n")
+    except Exception as e:
+        logger.error(f"GOOGLE_CREDENTIALS parse xatosi: {e}")
+        return None
+    try:
+        header = _b64url(json.dumps({"alg": "RS256", "typ": "JWT"}).encode())
+        payload = _b64url(json.dumps({
+            "iss": info["client_email"],
+            "scope": "https://www.googleapis.com/auth/spreadsheets",
+            "aud": "https://oauth2.googleapis.com/token",
+            "iat": now, "exp": now + 3600,
+        }).encode())
+        msg = f"{header}.{payload}".encode()
+        pk = serialization.load_pem_private_key(info["private_key"].encode(), password=None)
+        sig = pk.sign(msg, _rsa_padding.PKCS1v15(), hashes.SHA256())
+        jwt = f"{header}.{payload}.{_b64url(sig)}"
+    except Exception as e:
+        logger.error(f"JWT xatosi: {e}")
+        return None
+    try:
+        resp = _http.post(
+            "https://oauth2.googleapis.com/token",
+            data={"grant_type": "urn:ietf:params:oauth:grant-type:jwt-bearer", "assertion": jwt},
+            timeout=10,
+        )
+        token = resp.json().get("access_token")
+        _token_cache["token"] = token
+        _token_cache["exp"] = now + 3000
+        return token
+    except Exception as e:
+        logger.error(f"Token xatosi: {e}")
+        return None
+
+
+def _sheets_ensure_headers(token: str):
+    hdrs = {"Authorization": f"Bearer {token}"}
+    rng = urllib.parse.quote("Lidlar!A1:H1", safe="")
+    r = _http.get(f"{_SHEETS_BASE}/values/{rng}", headers=hdrs, timeout=10)
+    if r.ok and r.json().get("values"):
+        return
+    # Create sheet if missing
+    meta = _http.get(_SHEETS_BASE, headers=hdrs, timeout=10)
+    if meta.ok:
+        titles = [s["properties"]["title"] for s in meta.json().get("sheets", [])]
+        if "Lidlar" not in titles:
+            _http.post(f"{_SHEETS_BASE}:batchUpdate", headers=hdrs, timeout=10,
+                       json={"requests": [{"addSheet": {"properties": {"title": "Lidlar"}}}]})
+    _http.put(f"{_SHEETS_BASE}/values/{rng}", headers=hdrs, timeout=10,
+              params={"valueInputOption": "RAW"},
+              json={"values": [["Sana", "Ism", "Telefon", "Marka", "Miqdor", "To'lov", "Narx", "Holat"]]})
+
+
+_sheets_init_done = False
+
+
+def sheets_add_lead(name, phone, marka, miqdor, tolov, narx, holat="Yangi lid"):
+    global _sheets_init_done
+    try:
+        token = _get_sheets_token()
+        if not token:
+            return
+        if not _sheets_init_done:
+            _sheets_ensure_headers(token)
+            _sheets_init_done = True
+        rng = urllib.parse.quote("Lidlar!A:H", safe="")
+        row = [datetime.now().strftime("%Y-%m-%d %H:%M"),
+               name, phone, marka, miqdor, tolov, narx, holat]
+        r = _http.post(
+            f"{_SHEETS_BASE}/values/{rng}:append",
+            headers={"Authorization": f"Bearer {token}"},
+            params={"valueInputOption": "USER_ENTERED", "insertDataOption": "INSERT_ROWS"},
+            json={"values": [row]},
+            timeout=10,
+        )
+        if r.ok:
+            logger.info(f"Sheets OK: {name}, {marka}")
+        else:
+            logger.error(f"Sheets {r.status_code}: {r.text[:150]}")
+    except Exception as e:
+        logger.error(f"sheets_add_lead: {e}")
+
 
 conversations = {}
 clients_db = {}
@@ -320,6 +432,21 @@ async def handle_response(chat_id, text, response, update, context):
         await update.message.reply_text("Rahmat, tez orada bog'lanamiz.")
         card = build_lead_card(chat_id, text, response)
         await notify_boss(context, card)
+        # Google Sheets ga yoz
+        c = clients_db.get(chat_id, {})
+        details = {}
+        for line in response.strip().split('\n')[1:]:
+            if ':' in line:
+                k, v = line.split(':', 1)
+                details[k.strip()] = v.strip()
+        sheets_add_lead(
+            name=c.get('name', '?'),
+            phone=extract_phone(text),
+            marka=details.get('Marka', '?'),
+            miqdor=details.get('Miqdor', '?'),
+            tolov=details.get("To'lov", '?'),
+            narx=details.get('Narx', '?'),
+        )
         if chat_id in clients_db:
             clients_db[chat_id]['category'] = 'Issiq'
         if chat_id in conversations and conversations[chat_id]:

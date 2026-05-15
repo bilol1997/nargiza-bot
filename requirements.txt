@@ -1,3 +1,5 @@
 python-telegram-bot
 anthropic
 openai
+requests
+cryptography
