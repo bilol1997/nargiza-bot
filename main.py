@@ -236,8 +236,10 @@ async def notify_boss(context, message):
 async def send_customer(context, chat_id, text):
     try:
         await context.bot.send_message(chat_id=chat_id, text=text)
+        return True
     except Exception as e:
-        logger.error(f"Customer notify error: {e}")
+        logger.error(f"Customer notify error (chat_id={chat_id}): {e}")
+        return False
 
 
 def extract_phone(text):
@@ -445,6 +447,7 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 await update.message.reply_text(f"Narxlar saqlandi!\n{prices_text}")
                 logger.info(f"pending_price_requests: {pending_price_requests}")
                 notified = []
+                failed = []
                 for cust_id, req in list(pending_price_requests.items()):
                     stored_marka = req.get('marka', '')
                     matched_key, narx = match_marka(stored_marka, parsed)
@@ -460,19 +463,25 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
                         if total is not None:
                             msg += f"\n{miqdor_str} uchun jami: {int(total):,} so'm."
                     msg += "\nBuyurtmani tasdiqlaysizmi?"
-                    await send_customer(context, cust_id, msg)
-                    pending_price_requests.pop(cust_id, None)
-                    notified.append(f"{name or cust_id} ({matched_key})")
+                    ok = await send_customer(context, cust_id, msg)
+                    if ok:
+                        pending_price_requests.pop(cust_id, None)
+                        notified.append(f"{name or cust_id} ({matched_key})")
+                    else:
+                        failed.append(f"{name or cust_id} ({matched_key}) — xabar yetmadi!")
+                status_lines = []
                 if notified:
-                    await update.message.reply_text(f"Yuborildi: {', '.join(notified)}")
-                elif pending_price_requests:
+                    status_lines.append(f"Yuborildi: {', '.join(notified)}")
+                if failed:
+                    status_lines.append(f"XATO: {', '.join(failed)}")
+                if not notified and not failed and pending_price_requests:
                     still = [
                         f"{clients_db.get(cid, {}).get('name', cid)}: {r.get('marka', '?')}"
                         for cid, r in pending_price_requests.items()
                     ]
-                    await update.message.reply_text(
-                        f"Narx kutayotgan mijozlar (marka mos kelmadi):\n" + "\n".join(still)
-                    )
+                    status_lines.append("Marka mos kelmadi:\n" + "\n".join(still))
+                if status_lines:
+                    await update.message.reply_text("\n".join(status_lines))
             else:
                 await update.message.reply_text("Format noto'g'ri. Qaytadan /narx yuboring.")
             return
@@ -486,9 +495,10 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
             c = clients_db.get(cust_id, {})
             marka = req.get('marka', '?')
             miqdor_str = req.get('miqdor', '?')
-            price_match = re.search(r'\d[\d\s]*\d|\d{4,}', text)
+            text_digits = re.sub(r'[^\d\s]', ' ', text)
+            price_match = re.search(r'\d[\d ]*\d|\d{4,}', text_digits)
             if price_match:
-                narx = int(re.sub(r'[^0-9]', '', price_match.group()))
+                narx = int(re.sub(r'\s', '', price_match.group()))
             else:
                 narx = current_prices.get(marka)
             if not narx:
@@ -509,11 +519,12 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await update.message.reply_text(f"Yuborildi: {msg}")
             return
 
-        # Boss narx kelishuvini tasdiqlaydi: "ha 20400", "ruxsat berdi", "tasdiqlandi" va h.k.
+        # Boss narx kelishuvini tasdiqlaydi: "ha 20400", "ha [20,400]", "ruxsat berdi" va h.k.
         if pending_price_negotiations and any(w in low for w in [
             'ha ', 'ruxsat', 'tasdiqlandi', 'berish mumkin', 'beramiz', 'roziman', 'ok'
         ]):
-            price_match = re.search(r'\d[\d\s]*\d|\d{4,}', text)
+            text_digits = re.sub(r'[^\d\s]', ' ', text)  # [20,400] → " 20 400 "
+            price_match = re.search(r'\d[\d ]*\d|\d{4,}', text_digits)
             customer_id, data = list(pending_price_negotiations.items())[-1]
             agreed = re.sub(r'\s', '', price_match.group()) if price_match else data['taklif_narx']
             c = clients_db.get(customer_id, {})
