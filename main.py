@@ -150,7 +150,7 @@ async def get_nargiza_response(chat_id, user_message):
         return msg
     except Exception as e:
         logger.error(f"Claude error: {e}")
-        return "Bir daqiqa."
+        return ""
 
 
 def is_boss(chat_id):
@@ -309,7 +309,7 @@ async def handle_voice(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await update.message.reply_text("Tushunmadim, matn yozing.")
     except Exception as e:
         logger.error(f"Voice error: {e}")
-        await update.message.reply_text("Bir daqiqa.")
+        await update.message.reply_text("Ovozni tushunmadim, matn yozing.")
 
 
 async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
