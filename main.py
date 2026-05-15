@@ -149,6 +149,33 @@ NARX_KELISHUV: [marka] | raqobat: [raqobat narxi] | [asl narx]
 - Yo'q bo'lsa: "Narxini aniqlab sizga xabar beraman"""
 
 
+def match_marka(stored, parsed):
+    """Flexible brand match: exact → case-insensitive → prefix."""
+    if stored in parsed:
+        return stored, parsed[stored]
+    s = stored.strip().upper()
+    for k, v in parsed.items():
+        if k.strip().upper() == s:
+            return k, v
+    for k, v in parsed.items():
+        kc = k.strip().upper()
+        if s.startswith(kc) or kc.startswith(s):
+            return k, v
+    return None, None
+
+
+def calc_total(narx, miqdor_str):
+    """Calculate total price. Returns (kg_amount, total) or (None, None)."""
+    try:
+        num = float(re.sub(r'[^0-9.]', '', miqdor_str))
+        if not num:
+            return None, None
+        kg = num * 1000 if 'tonn' in miqdor_str.lower() else num
+        return kg, narx * kg
+    except (ValueError, TypeError):
+        return None, None
+
+
 def get_prices_text():
     if not current_prices:
         return "Kiritilmagan"
@@ -416,31 +443,35 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 current_prices.update(parsed)
                 prices_text = "\n".join([f"{k}: {v:,}" for k, v in parsed.items()])
                 await update.message.reply_text(f"Narxlar saqlandi!\n{prices_text}")
-                # Narx kutayotgan mijozlarga xabar yuborish
+                logger.info(f"pending_price_requests: {pending_price_requests}")
                 notified = []
                 for cust_id, req in list(pending_price_requests.items()):
-                    marka = req.get('marka', '')
-                    if marka in parsed:
-                        narx = parsed[marka]
-                        miqdor_str = req.get('miqdor', '?')
-                        c = clients_db.get(cust_id, {})
-                        name = c.get('name', '')
-                        name_prefix = f"{name}, " if name else ""
-                        msg = f"{name_prefix}{marka} narxi: {narx:,} so'm/kg."
-                        if miqdor_str and miqdor_str != '?':
-                            try:
-                                digits = int(re.sub(r'[^0-9]', '', miqdor_str))
-                                kg = digits * 1000 if 'tonn' in miqdor_str.lower() else digits
-                                total = narx * kg
-                                msg += f" {miqdor_str} uchun jami: {total:,} so'm."
-                            except (ValueError, TypeError):
-                                pass
-                        await send_customer(context, cust_id, msg)
-                        pending_price_requests.pop(cust_id, None)
-                        notified.append(f"{name or cust_id} ({marka})")
+                    stored_marka = req.get('marka', '')
+                    matched_key, narx = match_marka(stored_marka, parsed)
+                    if narx is None:
+                        continue
+                    miqdor_str = req.get('miqdor', '?')
+                    c = clients_db.get(cust_id, {})
+                    name = c.get('name', '')
+                    name_prefix = f"{name}, yaxshi xabar! " if name else "Yaxshi xabar! "
+                    msg = f"{name_prefix}{matched_key} narxi: {narx:,} so'm/kg."
+                    if miqdor_str and miqdor_str != '?':
+                        kg, total = calc_total(narx, miqdor_str)
+                        if total is not None:
+                            msg += f"\n{miqdor_str} uchun jami: {int(total):,} so'm."
+                    msg += "\nBuyurtmani tasdiqlaysizmi?"
+                    await send_customer(context, cust_id, msg)
+                    pending_price_requests.pop(cust_id, None)
+                    notified.append(f"{name or cust_id} ({matched_key})")
                 if notified:
+                    await update.message.reply_text(f"Yuborildi: {', '.join(notified)}")
+                elif pending_price_requests:
+                    still = [
+                        f"{clients_db.get(cid, {}).get('name', cid)}: {r.get('marka', '?')}"
+                        for cid, r in pending_price_requests.items()
+                    ]
                     await update.message.reply_text(
-                        f"Yuborildi: {', '.join(notified)}"
+                        f"Narx kutayotgan mijozlar (marka mos kelmadi):\n" + "\n".join(still)
                     )
             else:
                 await update.message.reply_text("Format noto'g'ri. Qaytadan /narx yuboring.")
@@ -466,16 +497,13 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 )
                 return
             name = c.get('name', '')
-            name_prefix = f"{name}, " if name else ""
+            name_prefix = f"{name}, yaxshi xabar! " if name else "Yaxshi xabar! "
             msg = f"{name_prefix}{marka} narxi: {narx:,} so'm/kg."
             if miqdor_str and miqdor_str != '?':
-                try:
-                    digits = int(re.sub(r'[^0-9]', '', miqdor_str))
-                    kg = digits * 1000 if 'tonn' in miqdor_str.lower() else digits
-                    total = narx * kg
-                    msg += f" {miqdor_str} uchun jami: {total:,} so'm."
-                except (ValueError, TypeError):
-                    pass
+                kg, total = calc_total(narx, miqdor_str)
+                if total is not None:
+                    msg += f"\n{miqdor_str} uchun jami: {int(total):,} so'm."
+            msg += "\nBuyurtmani tasdiqlaysizmi?"
             await send_customer(context, cust_id, msg)
             pending_price_requests.pop(cust_id, None)
             await update.message.reply_text(f"Yuborildi: {msg}")
