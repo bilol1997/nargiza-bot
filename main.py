@@ -83,7 +83,8 @@ Keyin qaysi marka kerakligini so'ra
 3. Marka olgach - yuqoridagi MARKA SO'RALGANDA qoidasini qo'lla
 4. Miqdor olgach - to'lov turini so'ra (naqd yoki bank o'tkazma)
 5. To'lov olgach - telefon raqamini so'ra
-6. Raqam olgach - FAQAT quyidagi formatda yoz, boshqa hech narsa qo'shma:
+6. Mijoz RAQAM (kamida 9 ta raqam) yuborgach - FAQAT quyidagi formatda yoz, boshqa hech narsa qo'shma:
+   "Ha", "Yaxshi", "Xo'p" kabi javoblar raqam emas - telefon so'rashda davom et
 ISSIQ_LID
 Marka: [marka]
 Miqdor: [miqdor]
@@ -181,10 +182,14 @@ async def send_customer(context, chat_id, text):
 
 
 def extract_phone(text):
-    match = re.search(r'\+?[\d][\d\s\-]{7,}[\d]', text)
-    if match:
-        return re.sub(r'[\s\-]', '', match.group())
-    return text.strip()
+    cleaned = re.sub(r'[\s\-\(\)]', '', text)
+    match = re.search(r'\+?\d{9,13}', cleaned)
+    return match.group() if match else ''
+
+
+def has_valid_phone(text):
+    digits = re.sub(r'\D', '', text)
+    return len(digits) >= 9
 
 
 def build_lead_card(chat_id, phone_text, response_text):
@@ -208,6 +213,13 @@ def build_lead_card(chat_id, phone_text, response_text):
 
 
 
+# Mijozga ko'rsatilmaydigan ichki markerlar
+_INTERNAL = (
+    'ISSIQ_LID', 'ISM:', 'NOMA_LUM_MARKA:', 'TEXNIK SAVOL:',
+    'NARX_KELISHUV:', "NARX_SO'ROV:", 'NARX_SOROV:', 'STOK_TEKSHIR:',
+)
+
+
 def parse_response(response):
     lines = response.strip().split('\n')
     customer_lines = []
@@ -225,6 +237,8 @@ def parse_response(response):
             markers['texnik_savol'] = stripped.split(':', 1)[1].strip()
         elif upper.startswith('NARX_KELISHUV:'):
             markers['narx_kelishuv'] = stripped.split(':', 1)[1].strip()
+        elif any(upper.startswith(m.upper()) for m in _INTERNAL):
+            pass  # ichki marker — mijozga ko'rsatilmaydi
         else:
             customer_lines.append(line)
     return '\n'.join(customer_lines).strip(), markers
@@ -234,11 +248,16 @@ async def handle_response(chat_id, text, response, update, context):
     customer_text, markers = parse_response(response)
 
     if 'issiq_lid' in markers:
+        if not has_valid_phone(text):
+            # Raqam emas (masalan "Ha olaman") — qayta so'ra
+            await update.message.reply_text("Telefon raqamingizni yuboring.")
+            if chat_id in conversations and conversations[chat_id]:
+                conversations[chat_id][-1]['content'] = "Telefon raqamini so'radim."
+            return
         await update.message.reply_text("Rahmat, tez orada bog'lanamiz.")
         await notify_boss(context, build_lead_card(chat_id, text, response))
         if chat_id in clients_db:
             clients_db[chat_id]['category'] = 'Issiq'
-        # Tarixda ISSIQ_LID markeri o'rniga toza matn saqlash — qayta yuborilmasin
         if chat_id in conversations and conversations[chat_id]:
             conversations[chat_id][-1]['content'] = "Rahmat, tez orada bog'lanamiz."
         return
