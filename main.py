@@ -627,9 +627,9 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if is_boss(chat_id):
         low = text.lower().strip()
 
-        if context.bot_data.get('awaiting_holat'):
-            context.bot_data['awaiting_holat'] = False
-            leads = context.bot_data.pop('holat_leads', [])
+        if context.user_data.get('awaiting_holat'):
+            context.user_data['awaiting_holat'] = False
+            leads = context.user_data.pop('holat_leads', [])
             parts = text.strip().split(None, 1)
             if len(parts) == 2 and parts[0].isdigit():
                 idx = int(parts[0]) - 1
@@ -659,8 +659,8 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 )
             return
 
-        if context.bot_data.get('awaiting_narx'):
-            context.bot_data['awaiting_narx'] = False
+        if context.user_data.get('awaiting_narx'):
+            context.user_data['awaiting_narx'] = False
             parsed = parse_price_list(text)
             if parsed:
                 current_prices.update(parsed)
@@ -805,7 +805,7 @@ async def handle_voice(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
     chat_id = update.effective_chat.id
     if is_boss(chat_id):
-        context.bot_data['last_photo'] = update.message.photo[-1].file_id
+        context.user_data['last_photo'] = update.message.photo[-1].file_id
         await update.message.reply_text("Rasm saqlandi!")
         return
     response = await get_nargiza_response(chat_id, "Mijoz rasm yubordi")
@@ -830,8 +830,8 @@ async def cmd_holat_ozgartir(update: Update, context: ContextTypes.DEFAULT_TYPE)
             "Sheets da ma'lumot topilmadi yoki ulanish yo'q."
         )
         return
-    context.bot_data['holat_leads'] = leads
-    context.bot_data['awaiting_holat'] = True
+    context.user_data['holat_leads'] = leads
+    context.user_data['awaiting_holat'] = True
     lines = ["So'nggi lidlar:\n"]
     for i, (_, row) in enumerate(leads, 1):
         name  = row[1] if len(row) > 1 else '?'
@@ -847,7 +847,7 @@ async def cmd_holat_ozgartir(update: Update, context: ContextTypes.DEFAULT_TYPE)
 async def cmd_narx(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not is_boss(update.effective_chat.id):
         return
-    context.bot_data['awaiting_narx'] = True
+    context.user_data['awaiting_narx'] = True
     await update.message.reply_text(
         "Narxlarni yuboring (har qator alohida):\n\n"
         "1561 - 12500\n"
