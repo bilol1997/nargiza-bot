@@ -1,4 +1,5 @@
 import os
+import re
 import logging
 from datetime import datetime
 import anthropic
@@ -76,7 +77,9 @@ AFZALLIKLAR:
 
 SAVDO QADAMLARI:
 1. Yangi mijoz yozsa - "Xush kelibsiz!" de, ismini so'ra
-2. Ism olgach - qaysi marka kerakligini so'ra
+2. Ism olgach - avval yangi qatorda shu formatda yoz:
+ISM: [mijoz aytgan ism]
+Keyin qaysi marka kerakligini so'ra
 3. Marka olgach - yuqoridagi MARKA SO'RALGANDA qoidasini qo'lla
 4. Miqdor olgach - to'lov turini so'ra (naqd yoki bank o'tkazma)
 5. To'lov olgach - telefon raqamini so'ra
@@ -177,7 +180,14 @@ async def send_customer(context, chat_id, text):
         logger.error(f"Customer notify error: {e}")
 
 
-def build_lead_card(chat_id, phone, response_text):
+def extract_phone(text):
+    match = re.search(r'\+?[\d][\d\s\-]{7,}[\d]', text)
+    if match:
+        return re.sub(r'[\s\-]', '', match.group())
+    return text.strip()
+
+
+def build_lead_card(chat_id, phone_text, response_text):
     c = clients_db.get(chat_id, {})
     details = {}
     for line in response_text.strip().split('\n')[1:]:
@@ -189,7 +199,7 @@ def build_lead_card(chat_id, phone, response_text):
         f"ISSIQ LID!\n"
         f"Ism: {c.get('name', '?')}\n"
         f"Telegram: {c.get('telegram', 'nomalum')}\n"
-        f"Telefon: {phone}\n"
+        f"Telefon: {extract_phone(phone_text)}\n"
         f"Marka: {details.get('Marka', '?')}\n"
         f"Miqdor: {details.get('Miqdor', '?')}\n"
         f"Narx: {details.get('Narx', '?')}\n"
@@ -207,6 +217,8 @@ def parse_response(response):
         upper = stripped.upper()
         if upper.startswith('ISSIQ_LID'):
             markers['issiq_lid'] = response
+        elif upper.startswith('ISM:'):
+            markers['ism'] = stripped.split(':', 1)[1].strip()
         elif upper.startswith('NOMA_LUM_MARKA:'):
             markers['noma_lum_marka'] = stripped.split(':', 1)[1].strip()
         elif upper.startswith('TEXNIK SAVOL:'):
@@ -226,7 +238,22 @@ async def handle_response(chat_id, text, response, update, context):
         await notify_boss(context, build_lead_card(chat_id, text, response))
         if chat_id in clients_db:
             clients_db[chat_id]['category'] = 'Issiq'
+        # Tarixda ISSIQ_LID markeri o'rniga toza matn saqlash — qayta yuborilmasin
+        if chat_id in conversations and conversations[chat_id]:
+            conversations[chat_id][-1]['content'] = "Rahmat, tez orada bog'lanamiz."
         return
+
+    if 'ism' in markers:
+        name = markers['ism']
+        if chat_id in clients_db:
+            clients_db[chat_id]['name'] = name
+        else:
+            clients_db[chat_id] = {
+                'name': name,
+                'telegram': '',
+                'category': 'Yangi',
+                'date': datetime.now().strftime("%Y-%m-%d %H:%M")
+            }
 
     if 'noma_lum_marka' in markers:
         brand = markers['noma_lum_marka']
@@ -299,7 +326,6 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 await update.message.reply_text("Format noto'g'ri. Qaytadan /narx yuboring.")
             return
 
-        await update.message.reply_text(f"Qabul: {text}")
         return
 
     response = await get_nargiza_response(chat_id, text)
