@@ -1,5 +1,3 @@
 python-telegram-bot
 anthropic
 openai
-google-auth
-requests

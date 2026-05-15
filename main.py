@@ -1,18 +1,9 @@
 import os
 import re
-import json
-import time
 import logging
 from datetime import datetime
 import anthropic
 import openai
-try:
-    import requests as http_req
-    from google.oauth2.service_account import Credentials as GCredentials
-    from google.auth.transport.requests import Request as GRequest
-    _SHEETS_AVAILABLE = True
-except ImportError:
-    _SHEETS_AVAILABLE = False
 from telegram import Update
 from telegram.ext import (
     Application,
@@ -30,116 +21,8 @@ TELEGRAM_TOKEN = os.environ.get("TELEGRAM_TOKEN")
 CLAUDE_API_KEY = os.environ.get("CLAUDE_API_KEY")
 OPENAI_API_KEY = os.environ.get("OPENAI_API_KEY")
 BOSS_CHAT_ID = int(os.environ.get("BOSS_CHAT_ID", "0"))
-GOOGLE_SHEET_ID = os.environ.get("GOOGLE_SHEET_ID", "1VcRgmY8b6CLk-E-DjVS4SBoMfU9qB9nvoc-S-ia_9yk")
-
 claude_client = anthropic.Anthropic(api_key=CLAUDE_API_KEY)
 openai_client = openai.OpenAI(api_key=OPENAI_API_KEY)
-
-# ── Google Sheets (google-auth + requests, no gspread) ──────────────────────
-
-_SHEETS_SCOPES = ["https://www.googleapis.com/auth/spreadsheets"]
-_token_cache: dict = {"token": None, "expires_at": 0}
-
-
-def _load_creds_info():
-    """Load service account JSON from GOOGLE_CREDENTIALS env var or file."""
-    if not _SHEETS_AVAILABLE:
-        return None
-    raw = os.environ.get("GOOGLE_CREDENTIALS", "")
-    if raw:
-        try:
-            info = json.loads(raw)
-            if "private_key" in info:
-                info["private_key"] = info["private_key"].replace("\\n", "\n")
-            return info
-        except (json.JSONDecodeError, ValueError) as e:
-            logger.error(f"GOOGLE_CREDENTIALS JSON xatosi: {e}")
-            return None
-    if os.path.exists("credentials.json"):
-        with open("credentials.json") as f:
-            return json.load(f)
-    return None
-
-
-def _get_token():
-    """Return cached OAuth2 token, refresh if expired."""
-    if not _SHEETS_AVAILABLE:
-        return None
-    now = time.time()
-    if _token_cache["token"] and now < _token_cache["expires_at"]:
-        return _token_cache["token"]
-    info = _load_creds_info()
-    if not info:
-        return None
-    try:
-        creds = GCredentials.from_service_account_info(info, scopes=_SHEETS_SCOPES)
-        creds.refresh(GRequest())
-        _token_cache["token"] = creds.token
-        _token_cache["expires_at"] = now + 3000  # 50 daqiqa
-        return creds.token
-    except Exception as e:
-        logger.error(f"Google token xatosi: {e}")
-        return None
-
-
-def _sheets_api(method, path, **kwargs):
-    """Call Sheets REST API v4."""
-    token = _get_token()
-    if not token:
-        return None
-    base = f"https://sheets.googleapis.com/v4/spreadsheets/{GOOGLE_SHEET_ID}"
-    headers = {"Authorization": f"Bearer {token}", "Content-Type": "application/json"}
-    try:
-        resp = http_req.request(method, base + path, headers=headers, timeout=10, **kwargs)
-        if not resp.ok:
-            logger.error(f"Sheets API {resp.status_code}: {resp.text[:200]}")
-            return None
-        return resp.json()
-    except Exception as e:
-        logger.error(f"Sheets HTTP xatosi: {e}")
-        return None
-
-
-def _ensure_headers():
-    """Create 'Lidlar' sheet and header row if missing."""
-    data = _sheets_api("GET", "")
-    if data is None:
-        return
-    titles = [s["properties"]["title"] for s in data.get("sheets", [])]
-    if "Lidlar" not in titles:
-        _sheets_api("POST", ":batchUpdate",
-                    json={"requests": [{"addSheet": {"properties": {"title": "Lidlar"}}}]})
-    # Check if row 1 already has headers
-    existing = _sheets_api("GET", "/values/Lidlar!A1:H1")
-    if not existing or not existing.get("values"):
-        _sheets_api("PUT", "/values/Lidlar!A1:H1",
-                    params={"valueInputOption": "RAW"},
-                    json={"values": [["Sana", "Ism", "Telefon", "Marka",
-                                      "Miqdor", "To'lov", "Narx", "Holat"]]})
-
-
-_headers_checked = False
-
-
-def sheets_add_lead(name, phone, marka, miqdor, tolov, narx, holat="Yangi lid"):
-    global _headers_checked
-    try:
-        if not _headers_checked:
-            _ensure_headers()
-            _headers_checked = True
-        row = [datetime.now().strftime("%Y-%m-%d %H:%M"),
-               name, phone, marka, miqdor, tolov, narx, holat]
-        import urllib.parse
-        rng = urllib.parse.quote("Lidlar!A:H")
-        result = _sheets_api(
-            "POST", f"/values/{rng}:append",
-            params={"valueInputOption": "USER_ENTERED", "insertDataOption": "INSERT_ROWS"},
-            json={"values": [row]}
-        )
-        if result:
-            logger.info(f"Sheets: qo'shildi — {name}, {marka}")
-    except Exception as e:
-        logger.error(f"Sheets write error: {e}")
 
 conversations = {}
 clients_db = {}
@@ -437,21 +320,6 @@ async def handle_response(chat_id, text, response, update, context):
         await update.message.reply_text("Rahmat, tez orada bog'lanamiz.")
         card = build_lead_card(chat_id, text, response)
         await notify_boss(context, card)
-        # Google Sheets ga yoz
-        c = clients_db.get(chat_id, {})
-        details = {}
-        for line in response.strip().split('\n')[1:]:
-            if ':' in line:
-                k, v = line.split(':', 1)
-                details[k.strip()] = v.strip()
-        sheets_add_lead(
-            name=c.get('name', '?'),
-            phone=extract_phone(text),
-            marka=details.get('Marka', '?'),
-            miqdor=details.get('Miqdor', '?'),
-            tolov=details.get("To'lov", '?'),
-            narx=details.get('Narx', '?'),
-        )
         if chat_id in clients_db:
             clients_db[chat_id]['category'] = 'Issiq'
         if chat_id in conversations and conversations[chat_id]:
