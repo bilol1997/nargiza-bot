@@ -1,9 +1,12 @@
 import os
 import re
+import json
 import logging
 from datetime import datetime
 import anthropic
 import openai
+import gspread
+from google.oauth2.service_account import Credentials
 from telegram import Update
 from telegram.ext import (
     Application,
@@ -21,9 +24,59 @@ TELEGRAM_TOKEN = os.environ.get("TELEGRAM_TOKEN")
 CLAUDE_API_KEY = os.environ.get("CLAUDE_API_KEY")
 OPENAI_API_KEY = os.environ.get("OPENAI_API_KEY")
 BOSS_CHAT_ID = int(os.environ.get("BOSS_CHAT_ID", "0"))
+GOOGLE_SHEET_ID = os.environ.get("GOOGLE_SHEET_ID", "1VcRgmY8b6CLk-E-DjVS4SBoMfU9qB9nvoc-S-ia_9yk")
 
 claude_client = anthropic.Anthropic(api_key=CLAUDE_API_KEY)
 openai_client = openai.OpenAI(api_key=OPENAI_API_KEY)
+
+# Google Sheets client
+def _init_sheets():
+    scopes = ["https://www.googleapis.com/auth/spreadsheets"]
+    creds_json = os.environ.get("GOOGLE_CREDENTIALS")
+    if creds_json:
+        info = json.loads(creds_json)
+    elif os.path.exists("credentials.json"):
+        with open("credentials.json") as f:
+            info = json.load(f)
+    else:
+        logger.warning("Google credentials topilmadi — Sheets integratsiya o'chirilgan")
+        return None
+    creds = Credentials.from_service_account_info(info, scopes=scopes)
+    return gspread.authorize(creds)
+
+_gc = None
+
+def get_sheet():
+    global _gc
+    try:
+        if _gc is None:
+            _gc = _init_sheets()
+        if _gc is None:
+            return None
+        sh = _gc.open_by_key(GOOGLE_SHEET_ID)
+        try:
+            ws = sh.worksheet("Lidlar")
+        except gspread.WorksheetNotFound:
+            ws = sh.add_worksheet(title="Lidlar", rows=1000, cols=10)
+            ws.append_row(["Sana", "Ism", "Telefon", "Marka", "Miqdor", "To'lov", "Narx", "Holat"])
+        return ws
+    except Exception as e:
+        logger.error(f"Sheets error: {e}")
+        return None
+
+def sheets_add_lead(name, phone, marka, miqdor, tolov, narx, holat="Yangi lid"):
+    try:
+        ws = get_sheet()
+        if ws is None:
+            return
+        row = [
+            datetime.now().strftime("%Y-%m-%d %H:%M"),
+            name, phone, marka, miqdor, tolov, narx, holat
+        ]
+        ws.append_row(row)
+        logger.info(f"Sheets: qo'shildi — {name}, {marka}")
+    except Exception as e:
+        logger.error(f"Sheets write error: {e}")
 
 conversations = {}
 clients_db = {}
@@ -319,7 +372,23 @@ async def handle_response(chat_id, text, response, update, context):
                 conversations[chat_id][-1]['content'] = "Telefon raqamini so'radim."
             return
         await update.message.reply_text("Rahmat, tez orada bog'lanamiz.")
-        await notify_boss(context, build_lead_card(chat_id, text, response))
+        card = build_lead_card(chat_id, text, response)
+        await notify_boss(context, card)
+        # Google Sheets ga yoz
+        c = clients_db.get(chat_id, {})
+        details = {}
+        for line in response.strip().split('\n')[1:]:
+            if ':' in line:
+                k, v = line.split(':', 1)
+                details[k.strip()] = v.strip()
+        sheets_add_lead(
+            name=c.get('name', '?'),
+            phone=extract_phone(text),
+            marka=details.get('Marka', '?'),
+            miqdor=details.get('Miqdor', '?'),
+            tolov=details.get("To'lov", '?'),
+            narx=details.get('Narx', '?'),
+        )
         if chat_id in clients_db:
             clients_db[chat_id]['category'] = 'Issiq'
         if chat_id in conversations and conversations[chat_id]:
