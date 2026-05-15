@@ -633,12 +633,14 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
             parts = text.strip().split(None, 1)
             if len(parts) == 2 and parts[0].isdigit():
                 idx = int(parts[0]) - 1
-                new_status = parts[1].strip()
-                if new_status not in HOLATLAR:
+                new_status_raw = parts[1].strip()
+                matched = next((h for h in HOLATLAR if h.lower() == new_status_raw.lower()), None)
+                if not matched:
                     await update.message.reply_text(
                         f"Noto'g'ri holat. Tanlov: {' / '.join(HOLATLAR)}"
                     )
                     return
+                new_status = matched
                 if 0 <= idx < len(leads):
                     sheet_row, row = leads[idx]
                     ok = sheets_update_status(sheet_row, new_status)
