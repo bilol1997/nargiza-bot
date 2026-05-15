@@ -28,6 +28,8 @@ openai_client = openai.OpenAI(api_key=OPENAI_API_KEY)
 conversations = {}
 clients_db = {}
 current_prices = {}
+# {customer_chat_id: {'marka': str, 'taklif_narx': str, 'asl_narx': str}}
+pending_price_negotiations = {}
 
 
 SYSTEM_PROMPT = """Sen Nargiza - Petro Plast kompaniyasining savdo menedjeri.
@@ -104,11 +106,20 @@ NARX SO'RALGANDA (mijoz "narxi qancha?" desa):
 - NARXLAR bo'limida narxi yo'q bo'lsa - "Narxini bugun aniqlab sizga xabar beraman" de
 - HECH QACHON "boshlig'im bilan gaplashaman" dema — bu faqat chegirma so'raganda
 
-NARX KELISHUVI — FAQAT mijoz "qimmat", "arzonroq qiling", "chegirma bering" desa:
-Sen narxni o'zingdan pasaytira OLMAYSAN. Shunda:
-1. Mijozga: "Men boshlig'im bilan gaplashib, sizga javob beraman." de
-2. Keyin yangi qatorda:
-NARX_KELISHUV: [marka], [mijoz aytgan narx yoki "chegirma so'radi"]
+NARX KELISHUVI — FAQAT mijoz BIRINCHI marta "qimmat", "arzonroq qiling", "chegirma bering" desa:
+Avval suhbat tarixini ko'r:
+- Agar tarixda "Men boshlig'im bilan gaplashib javob beraman" allaqachon aytilgan bo'lsa →
+  "Boshlig'imga yetkazdim allaqachon, tez orada javob beramiz" de. NARX_KELISHUV YOZMA.
+- Agar tarixda narx kelishilgan (mijoz "qabul", "mayli", "xo'p" degan) bo'lsa →
+  "Bu narx bo'yicha allaqachon kelishdik — [narx] so'm/kg yakuniy narximiz" de. NARX_KELISHUV YOZMA.
+- Agar birinchi marta so'ralyapti → narxni o'zingdan pasaytira OLMAYSAN:
+  1. Mijozga: "Men boshlig'im bilan gaplashib, sizga javob beraman." de
+  2. Keyin yangi qatorda:
+NARX_KELISHUV: [marka], [mijoz aytgan narx yoki "chegirma so'radi"], [asl narx]
+
+MIJOZ "BOSHLIG'INGIZ JAVOB BERDI" DESA:
+- Avval suhbatda muhokama qilingan narxni eslaydi
+- "Ha, [narx] so'm/kg qabul qilindi. To'lov turini tasdiqlaysizmi?" de
 
 E'TIROZLAR:
 "Qimmat" desa:
@@ -314,11 +325,21 @@ async def handle_response(chat_id, text, response, update, context):
 
     if 'narx_kelishuv' in markers:
         c = clients_db.get(chat_id, {})
+        parts = markers['narx_kelishuv'].split(',')
+        marka = parts[0].strip() if parts else '?'
+        taklif = parts[1].strip() if len(parts) > 1 else '?'
+        asl = parts[2].strip() if len(parts) > 2 else current_prices.get(marka, '?')
+        pending_price_negotiations[chat_id] = {
+            'marka': marka, 'taklif_narx': taklif, 'asl_narx': str(asl)
+        }
         await notify_boss(
             context,
             f"NARX KELISHUVI:\n"
             f"Mijoz: {c.get('name', '?')} {c.get('telegram', '')}\n"
-            f"Ma'lumot: {markers['narx_kelishuv']}"
+            f"Marka: {marka}\n"
+            f"Mijoz taklifi: {taklif}\n"
+            f"Bizning narx: {asl}\n"
+            f"Javob: 'ha [narx]' yoki 'yo\\'q'"
         )
 
 
@@ -348,6 +369,8 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
     text = update.message.text
 
     if is_boss(chat_id):
+        low = text.lower().strip()
+
         if context.bot_data.get('awaiting_narx'):
             context.bot_data['awaiting_narx'] = False
             parsed = parse_price_list(text)
@@ -357,6 +380,39 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 await update.message.reply_text(f"Narxlar saqlandi!\n{prices_text}")
             else:
                 await update.message.reply_text("Format noto'g'ri. Qaytadan /narx yuboring.")
+            return
+
+        # Boss narx kelishuvini tasdiqlaydi: "ha 20400", "ruxsat berdi", "tasdiqlandi" va h.k.
+        if pending_price_negotiations and any(w in low for w in [
+            'ha ', 'ruxsat', 'tasdiqlandi', 'berish mumkin', 'beramiz', 'roziman', 'ok'
+        ]):
+            price_match = re.search(r'\d[\d\s]*\d|\d{4,}', text)
+            customer_id, data = list(pending_price_negotiations.items())[-1]
+            agreed = re.sub(r'\s', '', price_match.group()) if price_match else data['taklif_narx']
+            c = clients_db.get(customer_id, {})
+            try:
+                agreed_fmt = f"{int(agreed):,}"
+            except (ValueError, TypeError):
+                agreed_fmt = agreed
+            await send_customer(
+                context, customer_id,
+                f"Yaxshi xabar! {data['marka']} narxi {agreed_fmt} so'm/kg qabul qilindi. "
+                f"To'lov turini tasdiqlaysizmi?"
+            )
+            if customer_id in clients_db:
+                clients_db[customer_id]['agreed_narx'] = agreed
+            pending_price_negotiations.pop(customer_id, None)
+            await update.message.reply_text(f"Mijozga {agreed_fmt} so'm/kg narx yuborildi.")
+            return
+
+        if pending_price_negotiations and any(w in low for w in ["yo'q", 'yoq', 'mumkin emas', 'rad']):
+            customer_id, data = list(pending_price_negotiations.items())[-1]
+            await send_customer(
+                context, customer_id,
+                f"{data['marka']} narxi {data['asl_narx']} so'm/kg — bu bizning yakuniy narximiz."
+            )
+            pending_price_negotiations.pop(customer_id, None)
+            await update.message.reply_text("Mijozga yakuniy narx yuborildi.")
             return
 
         return
