@@ -1,7 +1,6 @@
 import os
 import re
 import json
-import base64
 import time
 import logging
 from datetime import datetime
@@ -39,21 +38,17 @@ _token_cache: dict = {"token": None, "expires_at": 0}
 
 
 def _load_creds_info():
-    """Load service account JSON from env var (plain or base64) or file."""
+    """Load service account JSON from GOOGLE_CREDENTIALS env var or file."""
     raw = os.environ.get("GOOGLE_CREDENTIALS", "")
     if raw:
         try:
             info = json.loads(raw)
-        except (json.JSONDecodeError, ValueError):
-            try:
-                info = json.loads(base64.b64decode(raw + "==").decode("utf-8"))
-            except Exception as e:
-                logger.error(f"GOOGLE_CREDENTIALS decode xatosi: {e}")
-                return None
-        # Railway ba'zan \\n ni literal saqlaydi — tuzat
-        if "private_key" in info:
-            info["private_key"] = info["private_key"].replace("\\n", "\n")
-        return info
+            if "private_key" in info:
+                info["private_key"] = info["private_key"].replace("\\n", "\n")
+            return info
+        except (json.JSONDecodeError, ValueError) as e:
+            logger.error(f"GOOGLE_CREDENTIALS JSON xatosi: {e}")
+            return None
     if os.path.exists("credentials.json"):
         with open("credentials.json") as f:
             return json.load(f)
