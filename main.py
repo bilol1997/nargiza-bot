@@ -1,6 +1,5 @@
 import os
 import logging
-import asyncio
 from datetime import datetime
 import anthropic
 import openai
@@ -397,7 +396,7 @@ async def cmd_yordam(update: Update, context: ContextTypes.DEFAULT_TYPE):
     )
 
 
-async def main():
+def main():
     app = Application.builder().token(TELEGRAM_TOKEN).build()
     app.add_handler(CommandHandler("start", start))
     app.add_handler(CommandHandler("narx", cmd_narx))
@@ -408,14 +407,11 @@ async def main():
     app.add_handler(MessageHandler(filters.VOICE, handle_voice))
     app.add_handler(MessageHandler(filters.PHOTO, handle_photo))
     logger.info("Nargiza ishga tushdi!")
-    await app.initialize()
-    await app.start()
-    await app.updater.start_polling(
+    app.run_polling(
         allowed_updates=Update.ALL_TYPES,
         drop_pending_updates=True,
     )
-    await asyncio.sleep(float('inf'))
 
 
 if __name__ == "__main__":
-    asyncio.run(main())
+    main()
