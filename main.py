@@ -1,7 +1,6 @@
 import os
 import logging
 import asyncio
-from collections import deque
 from datetime import datetime
 import anthropic
 import openai
@@ -30,10 +29,6 @@ conversations = {}
 clients_db = {}
 current_prices = {}
 
-# {customer_chat_id: {'marka': str, 'miqdor': str, 'narx': str}}
-pending_stock_checks = {}
-# FIFO: boss answers in order
-boss_confirmation_queue = deque()
 
 SYSTEM_PROMPT = """Sen Nargiza - Petro Plast kompaniyasining savdo menedjeri.
 
@@ -64,18 +59,14 @@ NARXLAR (bugungi):
 MARKA SO'RALGANDA:
 a. NARXLAR bo'limida narxi ko'rsatilgan bo'lsa: "Ha, [marka] bor. Narxi [narx] so'm/kg. Qancha kerak?"
 b. NARXLAR bo'limida yo'q, lekin BIZDA BOR MARKALAR ro'yxatida bor bo'lsa: "Ha, bor. Qancha kerak?"
-c. Hech birida yo'q bo'lsa: "Hozir aniqlab beraman, bir daqiqa" de, keyin yangi qatorda:
+c. Hech birida yo'q bo'lsa: "Aniqlab beraman" de, keyin yangi qatorda:
 NOMA_LUM_MARKA: [so'ralgan marka nomi]
 
 MIJOZ UMUMIY POLIMER NOMI BILAN SO'RASA (PP bor mi, HDPE bor mi va h.k.):
 - "Ha, qaysi markasi kerak?" de
 
-MIQDOR OLGANDAN SO'NG:
-Mijozga "Yaxshi, bir daqiqa" de, keyin yangi qatorda:
-STOK_TEKSHIR: [marka], [miqdor]
-
 ANIQ TEXNIK MA'LUMOT (MFI, zichlik, xarakteristika) kerak bo'lsa:
-"Bir daqiqa, texnik ma'lumotni aniqlab beraman" de, keyin:
+"Texnik ma'lumotni aniqlab beraman" de, keyin:
 TEXNIK SAVOL: [mijoz ismi], [marka], [qanday ma'lumot kerak]
 
 AFZALLIKLAR:
@@ -88,7 +79,14 @@ SAVDO QADAMLARI:
 1. Yangi mijoz yozsa - salom, ismini so'ra
 2. Ism olgach - qaysi marka kerakligini so'ra
 3. Marka olgach - yuqoridagi MARKA SO'RALGANDA qoidasini qo'lla
-4. Miqdor olgach - yuqoridagi MIQDOR OLGANDAN SO'NG qoidasini qo'lla
+4. Miqdor olgach - to'lov turini so'ra (naqd yoki bank o'tkazma)
+5. To'lov olgach - telefon raqamini so'ra
+6. Raqam olgach - FAQAT quyidagi formatda yoz, boshqa hech narsa qo'shma:
+ISSIQ_LID
+Marka: [marka]
+Miqdor: [miqdor]
+Narx: [narx]
+To'lov: [to'lov turi]
 
 E'TIROZLAR:
 "Qimmat" desa:
@@ -194,18 +192,6 @@ def build_lead_card(chat_id, phone, response_text):
     )
 
 
-def build_stock_lead_card(chat_id, data):
-    c = clients_db.get(chat_id, {})
-    narx_str = f"{data['narx']:,} so'm/kg" if isinstance(data.get('narx'), int) else str(data.get('narx', '?'))
-    return (
-        f"ISSIQ LID!\n"
-        f"Ism: {c.get('name', '?')}\n"
-        f"Telegram: {c.get('telegram', 'nomalum')}\n"
-        f"Marka: {data.get('marka', '?')}\n"
-        f"Miqdor: {data.get('miqdor', '?')}\n"
-        f"Narx: {narx_str}"
-    )
-
 
 def parse_response(response):
     lines = response.strip().split('\n')
@@ -218,13 +204,6 @@ def parse_response(response):
             markers['issiq_lid'] = response
         elif upper.startswith('NOMA_LUM_MARKA:'):
             markers['noma_lum_marka'] = stripped.split(':', 1)[1].strip()
-        elif upper.startswith('STOK_TEKSHIR:'):
-            val = stripped.split(':', 1)[1].strip()
-            parts = val.split(',', 1)
-            markers['stok_tekshir'] = {
-                'marka': parts[0].strip() if parts else val,
-                'miqdor': parts[1].strip() if len(parts) > 1 else '?',
-            }
         elif upper.startswith('TEXNIK SAVOL:'):
             markers['texnik_savol'] = stripped.split(':', 1)[1].strip()
         else:
@@ -242,29 +221,9 @@ async def handle_response(chat_id, text, response, update, context):
             clients_db[chat_id]['category'] = 'Issiq'
         return
 
-    if 'stok_tekshir' in markers:
-        data = markers['stok_tekshir']
-        marka = data['marka']
-        miqdor = data['miqdor']
-        narx = current_prices.get(marka, '?')
-        pending_stock_checks[chat_id] = {'marka': marka, 'miqdor': miqdor, 'narx': narx}
-        if chat_id not in boss_confirmation_queue:
-            boss_confirmation_queue.append(chat_id)
-        msg = customer_text or "Yaxshi, bir daqiqa."
-        await update.message.reply_text(msg)
-        c = clients_db.get(chat_id, {})
-        narx_str = f"{narx:,} so'm/kg" if isinstance(narx, int) else "narx kiritilmagan"
-        await notify_boss(
-            context,
-            f"Boss, {marka} narxi o'zgarmadimi? Mavjudmi? Mijoz {miqdor} olmoqchi\n"
-            f"Hozirgi narx: {narx_str}\n"
-            f"Mijoz: {c.get('name', '?')} {c.get('telegram', '')}"
-        )
-        return
-
     if 'noma_lum_marka' in markers:
         brand = markers['noma_lum_marka']
-        msg = customer_text or "Hozir aniqlab beraman, bir daqiqa."
+        msg = customer_text or "Aniqlab beraman."
         await update.message.reply_text(msg)
         c = clients_db.get(chat_id, {})
         await notify_boss(
@@ -313,9 +272,6 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
     text = update.message.text
 
     if is_boss(chat_id):
-        low = text.lower().strip()
-
-        # Narx kiritish rejimi
         if context.bot_data.get('awaiting_narx'):
             context.bot_data['awaiting_narx'] = False
             parsed = parse_price_list(text)
@@ -326,26 +282,6 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
             else:
                 await update.message.reply_text("Format noto'g'ri. Qaytadan /narx yuboring.")
             return
-
-        # Boss tasdiq bermoqda (ha/yo'q)
-        if boss_confirmation_queue:
-            if any(w in low for w in ['ha', 'bor', 'yes', 'ok', 'tasdiqlandi', 'mavjud']):
-                customer_id = boss_confirmation_queue.popleft()
-                data = pending_stock_checks.pop(customer_id, {})
-                await notify_boss(context, build_stock_lead_card(customer_id, data))
-                await send_customer(context, customer_id, "Yaxshi, tez orada bog'lanamiz.")
-                if customer_id in clients_db:
-                    clients_db[customer_id]['category'] = 'Issiq'
-                return
-
-            if any(w in low for w in ["yo'q", 'yoq', 'sotildi', 'tugagan', 'no', 'tugadi']):
-                customer_id = boss_confirmation_queue.popleft()
-                pending_stock_checks.pop(customer_id, None)
-                await send_customer(
-                    context, customer_id,
-                    "Kechirasiz, bu marka hozir tugagan. Boshqa variant ko'rib chiqamizmi?"
-                )
-                return
 
         await update.message.reply_text(f"Qabul: {text}")
         return
