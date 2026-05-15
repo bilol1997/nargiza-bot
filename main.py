@@ -30,6 +30,8 @@ clients_db = {}
 current_prices = {}
 # {customer_chat_id: {'marka': str, 'taklif_narx': str, 'asl_narx': str}}
 pending_price_negotiations = {}
+# {customer_chat_id: {'marka': str, 'miqdor': str}}
+pending_price_requests = {}
 
 
 SYSTEM_PROMPT = """Sen Nargiza - Petro Plast kompaniyasining savdo menedjeri.
@@ -85,6 +87,7 @@ SAVDO QADAMLARI:
 1. Yangi mijoz yozsa - "Xush kelibsiz!" de, ismini so'ra
 2. Ism olgach - avval yangi qatorda shu formatda yoz:
 ISM: [mijoz aytgan ism]
+MUHIM: ISM: markerni FAQAT mijoz o'z ismini aytgandan KEYIN yoz. Ismini so'rab turganingda HECH QACHON YOZMA.
 Keyin qaysi marka kerakligini so'ra
 3. Marka olgach - yuqoridagi MARKA SO'RALGANDA qoidasini qo'lla
 4. Miqdor olgach - to'lov turini so'ra (naqd yoki bank o'tkazma)
@@ -107,7 +110,8 @@ Mijoz 9 yoki undan ko'p raqam yuborganda - bu TELEFON RAQAM. ISSIQ_LID chiqar.
 
 NARX SO'RALGANDA (mijoz "narxi qancha?" desa):
 - NARXLAR bo'limida narxi bor bo'lsa - narxni ayt va savdo davom ettir
-- NARXLAR bo'limida narxi yo'q bo'lsa - "Narxini bugun aniqlab sizga xabar beraman" de
+- NARXLAR bo'limida narxi yo'q bo'lsa - "Narxini bugun aniqlab sizga xabar beraman" de, keyin yangi qatorda:
+NARX_KUTILMOQDA: [marka] | [mijoz aytgan miqdor, agar aytilmagan bo'lsa "?"]
 - HECH QACHON "boshlig'im bilan gaplashaman" dema — bu faqat chegirma so'raganda
 
 NARX KELISHUVI — FAQAT mijoz BIRINCHI marta "qimmat", "arzonroq qiling", "chegirma bering" desa:
@@ -119,7 +123,7 @@ Avval suhbat tarixini ko'r:
 - Agar birinchi marta so'ralyapti → narxni o'zingdan pasaytira OLMAYSAN:
   1. Mijozga: "Men boshlig'im bilan gaplashib, sizga javob beraman." de
   2. Keyin yangi qatorda:
-NARX_KELISHUV: [marka], [mijoz aytgan narx yoki "chegirma so'radi"], [asl narx]
+NARX_KELISHUV: [marka] | chegirma so'radi | [asl narx]
 
 MIJOZ "BOSHLIG'INGIZ JAVOB BERDI" DESA:
 - Avval suhbatda muhokama qilingan narxni eslaydi
@@ -129,7 +133,7 @@ E'TIROZLAR:
 "Qimmat" desa:
 - "Qayerda ko'rdingiz?" de
 - Narx aytsa: "Men boshlig'im bilan gaplashib, sizga javob beraman." de, keyin:
-NARX_KELISHUV: [marka], [mijoz aytgan narx]
+NARX_KELISHUV: [marka] | taklif: [mijoz aytgan narx] | [asl narx]
 
 "O'ylab ko'raman" desa:
 - "Narxdan tashqari boshqa savol bormi?"
@@ -138,7 +142,7 @@ NARX_KELISHUV: [marka], [mijoz aytgan narx]
 "Boshqa joy arzon" desa:
 - "Qancha farq bor?" de
 - Narx farqini aytsa: "Men boshlig'im bilan gaplashib, sizga javob beraman." de, keyin:
-NARX_KELISHUV: [marka], [raqobat narxi]
+NARX_KELISHUV: [marka] | raqobat: [raqobat narxi] | [asl narx]
 
 "Shunchaki narx so'radim" desa:
 - NARXLAR bo'limida bor bo'lsa narxni ayt
@@ -245,7 +249,7 @@ def build_lead_card(chat_id, phone_text, response_text):
 # Mijozga ko'rsatilmaydigan ichki markerlar
 _INTERNAL = (
     'ISSIQ_LID', 'ISM:', 'NOMA_LUM_MARKA:', 'TEXNIK SAVOL:',
-    'NARX_KELISHUV:', "NARX_SO'ROV:", 'NARX_SOROV:', 'STOK_TEKSHIR:',
+    'NARX_KELISHUV:', "NARX_SO'ROV:", 'NARX_SOROV:', 'STOK_TEKSHIR:', 'NARX_KUTILMOQDA:',
 )
 
 
@@ -266,6 +270,8 @@ def parse_response(response):
             markers['texnik_savol'] = stripped.split(':', 1)[1].strip()
         elif upper.startswith('NARX_KELISHUV:'):
             markers['narx_kelishuv'] = stripped.split(':', 1)[1].strip()
+        elif upper.startswith('NARX_KUTILMOQDA:'):
+            markers['narx_kutilmoqda'] = stripped.split(':', 1)[1].strip()
         elif any(upper.startswith(m.upper()) for m in _INTERNAL):
             pass  # ichki marker — mijozga ko'rsatilmaydi
         else:
@@ -329,22 +335,40 @@ async def handle_response(chat_id, text, response, update, context):
 
     if 'narx_kelishuv' in markers:
         c = clients_db.get(chat_id, {})
-        parts = markers['narx_kelishuv'].split(',')
-        marka = parts[0].strip() if parts else '?'
-        taklif = parts[1].strip() if len(parts) > 1 else '?'
-        asl = parts[2].strip() if len(parts) > 2 else current_prices.get(marka, '?')
+        parts = [p.strip() for p in markers['narx_kelishuv'].split('|')]
+        marka = parts[0] if parts else '?'
+        vaziyat = parts[1] if len(parts) > 1 else "chegirma so'radi"
+        asl = parts[2] if len(parts) > 2 else str(current_prices.get(marka, '?'))
         pending_price_negotiations[chat_id] = {
-            'marka': marka, 'taklif_narx': taklif, 'asl_narx': str(asl)
+            'marka': marka, 'taklif_narx': vaziyat, 'asl_narx': asl
         }
+        if vaziyat.lower().startswith('raqobat:'):
+            raqobat_narx = vaziyat.split(':', 1)[1].strip()
+            vaziyat_text = f"Mijoz raqobatchi narxini aytdi: {raqobat_narx} so'm/kg"
+        elif vaziyat.lower().startswith('taklif:'):
+            taklif_narx = vaziyat.split(':', 1)[1].strip()
+            vaziyat_text = f"Mijoz taklif narxi: {taklif_narx} so'm/kg"
+        else:
+            vaziyat_text = vaziyat
+        try:
+            asl_fmt = f"{int(re.sub(r'[^0-9]', '', str(asl))):,}" if re.search(r'\d', str(asl)) else asl
+        except (ValueError, TypeError):
+            asl_fmt = asl
         await notify_boss(
             context,
             f"NARX KELISHUVI:\n"
             f"Mijoz: {c.get('name', '?')} {c.get('telegram', '')}\n"
             f"Marka: {marka}\n"
-            f"Mijoz taklifi: {taklif}\n"
-            f"Bizning narx: {asl}\n"
+            f"{vaziyat_text}\n"
+            f"Bizning narx: {asl_fmt} so'm/kg\n"
             f"Javob: 'ha [narx]' yoki 'yo\\'q'"
         )
+
+    if 'narx_kutilmoqda' in markers:
+        parts = [p.strip() for p in markers['narx_kutilmoqda'].split('|')]
+        marka = parts[0] if parts else '?'
+        miqdor = parts[1] if len(parts) > 1 else '?'
+        pending_price_requests[chat_id] = {'marka': marka, 'miqdor': miqdor}
 
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -382,6 +406,32 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 current_prices.update(parsed)
                 prices_text = "\n".join([f"{k}: {v:,}" for k, v in parsed.items()])
                 await update.message.reply_text(f"Narxlar saqlandi!\n{prices_text}")
+                # Narx kutayotgan mijozlarga xabar yuborish
+                notified = []
+                for cust_id, req in list(pending_price_requests.items()):
+                    marka = req.get('marka', '')
+                    if marka in parsed:
+                        narx = parsed[marka]
+                        miqdor_str = req.get('miqdor', '?')
+                        msg = f"{marka} narxi: {narx:,} so'm/kg."
+                        if miqdor_str and miqdor_str != '?':
+                            try:
+                                digits = int(re.sub(r'[^0-9]', '', miqdor_str))
+                                if 'tonn' in miqdor_str.lower():
+                                    kg = digits * 1000
+                                else:
+                                    kg = digits
+                                total = narx * kg
+                                msg += f" {miqdor_str} uchun jami: {total:,} so'm."
+                            except (ValueError, TypeError):
+                                pass
+                        await send_customer(context, cust_id, msg)
+                        pending_price_requests.pop(cust_id, None)
+                        notified.append(marka)
+                if notified:
+                    await update.message.reply_text(
+                        f"Narx kutayotgan mijozlarga xabar yuborildi: {', '.join(notified)}"
+                    )
             else:
                 await update.message.reply_text("Format noto'g'ri. Qaytadan /narx yuboring.")
             return
