@@ -369,6 +369,16 @@ async def handle_response(chat_id, text, response, update, context):
         marka = parts[0] if parts else '?'
         miqdor = parts[1] if len(parts) > 1 else '?'
         pending_price_requests[chat_id] = {'marka': marka, 'miqdor': miqdor}
+        c = clients_db.get(chat_id, {})
+        miqdor_text = f", {miqdor}" if miqdor and miqdor != '?' else ""
+        await notify_boss(
+            context,
+            f"NARX SO'ROVI:\n"
+            f"Mijoz: {c.get('name', '?')} {c.get('telegram', '')}\n"
+            f"Marka: {marka}{miqdor_text}\n"
+            f"/narx bilan narx kiriting — mijozga avtomatik yuboriladi.\n"
+            f"Yoki: 'mijozga ayt [narx]' deb yozing."
+        )
 
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -413,27 +423,62 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     if marka in parsed:
                         narx = parsed[marka]
                         miqdor_str = req.get('miqdor', '?')
-                        msg = f"{marka} narxi: {narx:,} so'm/kg."
+                        c = clients_db.get(cust_id, {})
+                        name = c.get('name', '')
+                        name_prefix = f"{name}, " if name else ""
+                        msg = f"{name_prefix}{marka} narxi: {narx:,} so'm/kg."
                         if miqdor_str and miqdor_str != '?':
                             try:
                                 digits = int(re.sub(r'[^0-9]', '', miqdor_str))
-                                if 'tonn' in miqdor_str.lower():
-                                    kg = digits * 1000
-                                else:
-                                    kg = digits
+                                kg = digits * 1000 if 'tonn' in miqdor_str.lower() else digits
                                 total = narx * kg
                                 msg += f" {miqdor_str} uchun jami: {total:,} so'm."
                             except (ValueError, TypeError):
                                 pass
                         await send_customer(context, cust_id, msg)
                         pending_price_requests.pop(cust_id, None)
-                        notified.append(marka)
+                        notified.append(f"{name or cust_id} ({marka})")
                 if notified:
                     await update.message.reply_text(
-                        f"Narx kutayotgan mijozlarga xabar yuborildi: {', '.join(notified)}"
+                        f"Yuborildi: {', '.join(notified)}"
                     )
             else:
                 await update.message.reply_text("Format noto'g'ri. Qaytadan /narx yuboring.")
+            return
+
+        # "Mijozga ayt/yoz [narx]" — kutayotgan mijozga narx yuborish
+        if any(phrase in low for phrase in ['mijozga ayt', 'mijozga yoz', 'mijozga yubor']):
+            if not pending_price_requests:
+                await update.message.reply_text("Narx kutayotgan mijoz yo'q.")
+                return
+            cust_id, req = list(pending_price_requests.items())[-1]
+            c = clients_db.get(cust_id, {})
+            marka = req.get('marka', '?')
+            miqdor_str = req.get('miqdor', '?')
+            price_match = re.search(r'\d[\d\s]*\d|\d{4,}', text)
+            if price_match:
+                narx = int(re.sub(r'[^0-9]', '', price_match.group()))
+            else:
+                narx = current_prices.get(marka)
+            if not narx:
+                await update.message.reply_text(
+                    f"{marka} narxi topilmadi. Masalan: 'mijozga ayt 20400'"
+                )
+                return
+            name = c.get('name', '')
+            name_prefix = f"{name}, " if name else ""
+            msg = f"{name_prefix}{marka} narxi: {narx:,} so'm/kg."
+            if miqdor_str and miqdor_str != '?':
+                try:
+                    digits = int(re.sub(r'[^0-9]', '', miqdor_str))
+                    kg = digits * 1000 if 'tonn' in miqdor_str.lower() else digits
+                    total = narx * kg
+                    msg += f" {miqdor_str} uchun jami: {total:,} so'm."
+                except (ValueError, TypeError):
+                    pass
+            await send_customer(context, cust_id, msg)
+            pending_price_requests.pop(cust_id, None)
+            await update.message.reply_text(f"Yuborildi: {msg}")
             return
 
         # Boss narx kelishuvini tasdiqlaydi: "ha 20400", "ruxsat berdi", "tasdiqlandi" va h.k.
