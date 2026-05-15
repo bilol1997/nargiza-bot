@@ -6,9 +6,13 @@ import logging
 from datetime import datetime
 import anthropic
 import openai
-import requests as http_req
-from google.oauth2.service_account import Credentials as GCredentials
-from google.auth.transport.requests import Request as GRequest
+try:
+    import requests as http_req
+    from google.oauth2.service_account import Credentials as GCredentials
+    from google.auth.transport.requests import Request as GRequest
+    _SHEETS_AVAILABLE = True
+except ImportError:
+    _SHEETS_AVAILABLE = False
 from telegram import Update
 from telegram.ext import (
     Application,
@@ -39,6 +43,8 @@ _token_cache: dict = {"token": None, "expires_at": 0}
 
 def _load_creds_info():
     """Load service account JSON from GOOGLE_CREDENTIALS env var or file."""
+    if not _SHEETS_AVAILABLE:
+        return None
     raw = os.environ.get("GOOGLE_CREDENTIALS", "")
     if raw:
         try:
@@ -52,12 +58,13 @@ def _load_creds_info():
     if os.path.exists("credentials.json"):
         with open("credentials.json") as f:
             return json.load(f)
-    logger.warning("Google credentials topilmadi — Sheets o'chirilgan")
     return None
 
 
 def _get_token():
     """Return cached OAuth2 token, refresh if expired."""
+    if not _SHEETS_AVAILABLE:
+        return None
     now = time.time()
     if _token_cache["token"] and now < _token_cache["expires_at"]:
         return _token_cache["token"]
