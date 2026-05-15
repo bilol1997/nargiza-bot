@@ -107,6 +107,51 @@ def _sheets_ensure_headers(token: str):
 
 
 _sheets_init_done = False
+HOLATLAR = ["Yangi", "Qayta aloqa", "Sotildi", "Rad etdi"]
+
+
+def sheets_get_leads(limit=10):
+    """Return list of (sheet_row_number, row_list) for last N leads."""
+    token = _get_sheets_token()
+    if not token:
+        return []
+    try:
+        rng = urllib.parse.quote("Lidlar!A:H", safe="")
+        r = _http.get(f"{_SHEETS_BASE}/values/{rng}",
+                      headers={"Authorization": f"Bearer {token}"}, timeout=10)
+        if not r.ok:
+            return []
+        all_rows = r.json().get("values", [])
+        data_rows = all_rows[1:]  # header ni o'tkazib yubor
+        start = max(0, len(data_rows) - limit)
+        result = []
+        for i, row in enumerate(data_rows[start:], start=start):
+            sheet_row = i + 2  # 1-based + header qatori
+            result.append((sheet_row, row))
+        return result
+    except Exception as e:
+        logger.error(f"sheets_get_leads: {e}")
+        return []
+
+
+def sheets_update_status(sheet_row, new_status):
+    """Update column H (Holat) for given sheet row number."""
+    token = _get_sheets_token()
+    if not token:
+        return False
+    try:
+        cell = urllib.parse.quote(f"Lidlar!H{sheet_row}", safe="")
+        r = _http.put(
+            f"{_SHEETS_BASE}/values/{cell}",
+            headers={"Authorization": f"Bearer {token}"},
+            params={"valueInputOption": "RAW"},
+            json={"values": [[new_status]]},
+            timeout=10,
+        )
+        return r.ok
+    except Exception as e:
+        logger.error(f"sheets_update_status: {e}")
+        return False
 
 
 def sheets_add_lead(name, phone, marka, miqdor, tolov, narx, holat="Yangi lid"):
@@ -257,7 +302,23 @@ NARX_KELISHUV: [marka] | raqobat: [raqobat narxi] | [asl narx]
 
 "Shunchaki narx so'radim" desa:
 - NARXLAR bo'limida bor bo'lsa narxni ayt
-- Yo'q bo'lsa: "Narxini aniqlab sizga xabar beraman"""
+- Yo'q bo'lsa: "Narxini aniqlab sizga xabar beraman"
+
+MUDDATLI TO'LOV SO'RASA:
+- "Hozircha to'lov naqd yoki bank o'tkazma orqali amalga oshiriladi. Boshqa variant bo'yicha boshlig'im bilan gaplashib, javob beraman." de
+
+KATTA MIQDOR (5 tonna va undan ko'p) SO'RASA:
+- Narxni aytgandan so'ng: "Katta miqdor uchun qo'shimcha chegirma bo'lishi mumkin — boshlig'im bilan aniqlayman." de
+
+SIFAT HUJJATI YOKI SERTIFIKAT SO'RASA:
+- "Ha, barcha mahsulotlarda sertifikat bor. Kerakli markani ayting, yuboray." de
+
+MAHSULOT QACHON KELISHI SO'RASA:
+- "Mavjud stokdan — 1-2 ish kuni ichida. Buyurtma bo'lsa — alohida aniqlayman." de
+
+SOLISHTIRGANDA (narx yoki sifat bo'yicha boshqa kompaniya bilan):
+- "Bizning narx sifatga mos. Qaysi kompaniya bilan solishtiryapsiz?" de
+- Javob berishsa: "Farq qancha?" de — keyin NARX KELISHUVI qoidasini qo'lla"""
 
 
 def match_marka(stored, parsed):
@@ -543,6 +604,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text(
             "Salom Boss!\n"
             "/narx - narx kiritish\n"
+            "/holat_ozgartir - lid holatini o'zgartir\n"
             "/hisobot - hisobot\n"
             "/mijozlar - mijozlar royxati\n"
             "/yordam - yordam"
@@ -564,6 +626,36 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     if is_boss(chat_id):
         low = text.lower().strip()
+
+        if context.bot_data.get('awaiting_holat'):
+            context.bot_data['awaiting_holat'] = False
+            leads = context.bot_data.pop('holat_leads', [])
+            parts = text.strip().split(None, 1)
+            if len(parts) == 2 and parts[0].isdigit():
+                idx = int(parts[0]) - 1
+                new_status = parts[1].strip()
+                if new_status not in HOLATLAR:
+                    await update.message.reply_text(
+                        f"Noto'g'ri holat. Tanlov: {' / '.join(HOLATLAR)}"
+                    )
+                    return
+                if 0 <= idx < len(leads):
+                    sheet_row, row = leads[idx]
+                    ok = sheets_update_status(sheet_row, new_status)
+                    name = row[1] if len(row) > 1 else '?'
+                    if ok:
+                        await update.message.reply_text(
+                            f"✅ {name} — holat '{new_status}' ga o'zgartirildi."
+                        )
+                    else:
+                        await update.message.reply_text("Sheets xatosi. Keyinroq urinib ko'ring.")
+                else:
+                    await update.message.reply_text("Noto'g'ri raqam.")
+            else:
+                await update.message.reply_text(
+                    "Format: [raqam] [holat]\nMasalan: 2 Sotildi"
+                )
+            return
 
         if context.bot_data.get('awaiting_narx'):
             context.bot_data['awaiting_narx'] = False
@@ -727,6 +819,29 @@ async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
             logger.error(f"Photo forward error: {e}")
 
 
+async def cmd_holat_ozgartir(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not is_boss(update.effective_chat.id):
+        return
+    leads = sheets_get_leads(10)
+    if not leads:
+        await update.message.reply_text(
+            "Sheets da ma'lumot topilmadi yoki ulanish yo'q."
+        )
+        return
+    context.bot_data['holat_leads'] = leads
+    context.bot_data['awaiting_holat'] = True
+    lines = ["So'nggi lidlar:\n"]
+    for i, (_, row) in enumerate(leads, 1):
+        name  = row[1] if len(row) > 1 else '?'
+        marka = row[3] if len(row) > 3 else '?'
+        holat = row[7] if len(row) > 7 else '?'
+        lines.append(f"{i}. {name} — {marka} [{holat}]")
+    lines.append(f"\nHolatni o'zgartirish: [raqam] [holat]")
+    lines.append(f"Masalan: 2 Sotildi")
+    lines.append(f"\nHolatlar: {' / '.join(HOLATLAR)}")
+    await update.message.reply_text("\n".join(lines))
+
+
 async def cmd_narx(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not is_boss(update.effective_chat.id):
         return
@@ -784,12 +899,14 @@ async def cmd_yordam(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(
         "Buyruqlar:\n"
         "/narx - narx kiritish\n"
+        "/holat_ozgartir - lid holatini o'zgartir\n"
         "/hisobot - statistika\n"
-        "/mijozlar - songi mijozlar\n"
+        "/mijozlar - so'nggi mijozlar\n"
         "/yordam - shu menyu\n\n"
-        "Mijoz stok so'raganda:\n"
-        "Ha/Bor - tasdiq, ISSIQ LID yuboriladi\n"
-        "Yo'q/Sotildi - mijozga tugaganligi aytiladi"
+        "Narx kelishuvi:\n"
+        "ha [narx] - mijozga narxni tasdiqla\n"
+        "yo'q - yakuniy narxni yuboradi\n"
+        "mijozga ayt [narx] - narx kutayotganga yuboradi"
     )
 
 
@@ -797,6 +914,7 @@ def main():
     app = Application.builder().token(TELEGRAM_TOKEN).build()
     app.add_handler(CommandHandler("start", start))
     app.add_handler(CommandHandler("narx", cmd_narx))
+    app.add_handler(CommandHandler("holat_ozgartir", cmd_holat_ozgartir))
     app.add_handler(CommandHandler("hisobot", cmd_hisobot))
     app.add_handler(CommandHandler("mijozlar", cmd_mijozlar))
     app.add_handler(CommandHandler("yordam", cmd_yordam))
