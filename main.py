@@ -75,7 +75,7 @@ AFZALLIKLAR:
 - Tezkor javob 24/7
 
 SAVDO QADAMLARI:
-1. Yangi mijoz yozsa - salom, ismini so'ra
+1. Yangi mijoz yozsa - "Xush kelibsiz!" de, ismini so'ra
 2. Ism olgach - qaysi marka kerakligini so'ra
 3. Marka olgach - yuqoridagi MARKA SO'RALGANDA qoidasini qo'lla
 4. Miqdor olgach - to'lov turini so'ra (naqd yoki bank o'tkazma)
@@ -87,20 +87,26 @@ Miqdor: [miqdor]
 Narx: [narx]
 To'lov: [to'lov turi]
 
+NARX KELISHUVI (muhim):
+Sen narxni o'zingdan pasaytira OLMAYSAN. Mijoz narxni tushirishni so'rasa yoki "qimmat" desa:
+1. Mijozga: "Men boshlig'im bilan gaplashib, sizga javob beraman." de
+2. Keyin yangi qatorda faqat shu formatda yoz:
+NARX_KELISHUV: [marka], [mijoz taklif qilgan narx yoki "qimmat dedi"]
+
 E'TIROZLAR:
 "Qimmat" desa:
-- "Qayerda ko'rdingiz?"
-- Narx aytsa: "Agar men ham o'sha narxda qilsam, olasizmi?"
-- "Ha" desa: "Qancha kerak va qachon?"
+- "Qayerda ko'rdingiz?" de
+- Narx aytsa: "Men boshlig'im bilan gaplashib, sizga javob beraman." de, keyin:
+NARX_KELISHUV: [marka], [mijoz aytgan narx]
 
 "O'ylab ko'raman" desa:
 - "Narxdan tashqari boshqa savol bormi?"
 - "Yo'q" desa: "Qachon qaror qilasiz?"
 
 "Boshqa joy arzon" desa:
-- "Qancha farq bor?"
-- "U yerdan avval olganmisiz?"
-- "Yo'q" desa: "Sinab ko'ring bizni, keyin taqqoslaysiz"
+- "Qancha farq bor?" de
+- Narx farqini aytsa: "Men boshlig'im bilan gaplashib, sizga javob beraman." de, keyin:
+NARX_KELISHUV: [marka], [raqobat narxi]
 
 "Shunchaki narx so'radim" desa:
 - "Tushundim. Qaysi marka ishlatasan?"
@@ -205,6 +211,8 @@ def parse_response(response):
             markers['noma_lum_marka'] = stripped.split(':', 1)[1].strip()
         elif upper.startswith('TEXNIK SAVOL:'):
             markers['texnik_savol'] = stripped.split(':', 1)[1].strip()
+        elif upper.startswith('NARX_KELISHUV:'):
+            markers['narx_kelishuv'] = stripped.split(':', 1)[1].strip()
         else:
             customer_lines.append(line)
     return '\n'.join(customer_lines).strip(), markers
@@ -242,6 +250,15 @@ async def handle_response(chat_id, text, response, update, context):
             f"TEXNIK SAVOL:\n"
             f"Mijoz: {c.get('name', '?')} {c.get('telegram', '')}\n"
             f"Xabar: {text}"
+        )
+
+    if 'narx_kelishuv' in markers:
+        c = clients_db.get(chat_id, {})
+        await notify_boss(
+            context,
+            f"NARX KELISHUVI:\n"
+            f"Mijoz: {c.get('name', '?')} {c.get('telegram', '')}\n"
+            f"Ma'lumot: {markers['narx_kelishuv']}"
         )
 
 
