@@ -83,19 +83,32 @@ Keyin qaysi marka kerakligini so'ra
 3. Marka olgach - yuqoridagi MARKA SO'RALGANDA qoidasini qo'lla
 4. Miqdor olgach - to'lov turini so'ra (naqd yoki bank o'tkazma)
 5. To'lov olgach - telefon raqamini so'ra
-6. Mijoz RAQAM (kamida 9 ta raqam) yuborgach - FAQAT quyidagi formatda yoz, boshqa hech narsa qo'shma:
-   "Ha", "Yaxshi", "Xo'p" kabi javoblar raqam emas - telefon so'rashda davom et
+6. Mijoz raqam yuborgach - faqat quyidagi formatda yoz, boshqa hech narsa qo'shma:
 ISSIQ_LID
 Marka: [marka]
 Miqdor: [miqdor]
 Narx: [narx]
 To'lov: [to'lov turi]
 
-NARX KELISHUVI (muhim):
-Sen narxni o'zingdan pasaytira OLMAYSAN. Mijoz narxni tushirishni so'rasa yoki "qimmat" desa:
+TELEFON RAQAM HAQIDA:
+O'zbekistonda telefon raqamlar quyidagi formatlarda keladi - BARCHASI TO'G'RI:
+- 9 ta raqam: 901234567, 998618500, 615012345
+- 11 ta raqam: 99890123456
+- 12 ta raqam: 998901234567
+- +998 bilan: +998901234567
+Mijoz 9 yoki undan ko'p raqam yuborganda - bu TELEFON RAQAM. ISSIQ_LID chiqar.
+"Ha", "Yaxshi", "Xo'p", "Mayli" kabi so'zlar telefon emas - bunday holda qayta so'ra.
+
+NARX SO'RALGANDA (mijoz "narxi qancha?" desa):
+- NARXLAR bo'limida narxi bor bo'lsa - narxni ayt va savdo davom ettir
+- NARXLAR bo'limida narxi yo'q bo'lsa - "Narxini bugun aniqlab sizga xabar beraman" de
+- HECH QACHON "boshlig'im bilan gaplashaman" dema — bu faqat chegirma so'raganda
+
+NARX KELISHUVI — FAQAT mijoz "qimmat", "arzonroq qiling", "chegirma bering" desa:
+Sen narxni o'zingdan pasaytira OLMAYSAN. Shunda:
 1. Mijozga: "Men boshlig'im bilan gaplashib, sizga javob beraman." de
-2. Keyin yangi qatorda faqat shu formatda yoz:
-NARX_KELISHUV: [marka], [mijoz taklif qilgan narx yoki "qimmat dedi"]
+2. Keyin yangi qatorda:
+NARX_KELISHUV: [marka], [mijoz aytgan narx yoki "chegirma so'radi"]
 
 E'TIROZLAR:
 "Qimmat" desa:
@@ -113,8 +126,8 @@ NARX_KELISHUV: [marka], [mijoz aytgan narx]
 NARX_KELISHUV: [marka], [raqobat narxi]
 
 "Shunchaki narx so'radim" desa:
-- "Tushundim. Qaysi marka ishlatasan?"
-- Javob bergach: "Oyiga taxminan qancha kerak?"""
+- NARXLAR bo'limida bor bo'lsa narxni ayt
+- Yo'q bo'lsa: "Narxini aniqlab sizga xabar beraman"""
 
 
 def get_prices_text():
@@ -188,8 +201,9 @@ def extract_phone(text):
 
 
 def has_valid_phone(text):
+    # 9 ta raqam yetarli (998618500, 901234567, +998901234567 barchasi to'g'ri)
     digits = re.sub(r'\D', '', text)
-    return len(digits) >= 9
+    return len(digits) >= 9 and not all(c.isalpha() for c in text.strip())
 
 
 def build_lead_card(chat_id, phone_text, response_text):
