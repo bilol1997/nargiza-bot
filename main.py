@@ -277,7 +277,9 @@ Avval suhbat tarixini ko'r:
 - Agar tarixda "Men boshlig'im bilan gaplashib javob beraman" allaqachon aytilgan bo'lsa →
   "Boshlig'imga yetkazdim allaqachon, tez orada javob beramiz" de.
 - Agar birinchi marta so'ralyapti → narxni o'zingdan pasaytira OLMAYSAN:
-  "Men boshlig'im bilan gaplashib, sizga javob beraman." de
+  1. Mijozga: "Men boshlig'im bilan gaplashib, sizga javob beraman." de
+  2. Keyin yangi qatorda:
+NARX_KELISHUV: [marka] | [mijoz taklif qilgan narx, yo'q bo'lsa "?"] | [joriy narx, yo'q bo'lsa "?"]
 
 E'TIROZLAR:
 "Qimmat" desa: "Qayerda ko'rdingiz?" de

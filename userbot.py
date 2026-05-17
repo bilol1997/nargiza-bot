@@ -49,8 +49,9 @@ _token_cache: dict = {"token": None, "exp": 0}
 last_price_message: str | None = None
 conversations: dict = {}        # {chat_id: [{"role": ..., "content": ...}]}
 clients_db: dict = {}           # {chat_id: {"name": ..., "telegram": ...}}
-pending_price_requests: dict = {}  # {customer_id: {"marka": str, "miqdor": str}}
-pending_bank_requests: dict = {}   # {customer_id: {"marka": str, "miqdor": str}}
+pending_price_requests: dict = {}        # {customer_id: {"marka": str, "miqdor": str}}
+pending_bank_requests: dict = {}         # {customer_id: {"marka": str, "miqdor": str}}
+pending_price_negotiations: dict = {}    # {customer_id: {"marka": str, "taklif": str, "asl": str}}
 
 
 SYSTEM_PROMPT = """Sen Nargiza - Petro Plast kompaniyasining savdo menedjeri.
@@ -140,7 +141,9 @@ Avval suhbat tarixini ko'r:
 - Agar tarixda "Men boshlig'im bilan gaplashib javob beraman" allaqachon aytilgan bo'lsa →
   "Boshlig'imga yetkazdim allaqachon, tez orada javob beramiz" de.
 - Agar birinchi marta so'ralyapti → narxni o'zingdan pasaytira OLMAYSAN:
-  "Men boshlig'im bilan gaplashib, sizga javob beraman." de
+  1. Mijozga: "Men boshlig'im bilan gaplashib, sizga javob beraman." de
+  2. Keyin yangi qatorda:
+NARX_KELISHUV: [marka] | [mijoz taklif qilgan narx, yo'q bo'lsa "?"] | [joriy narx, yo'q bo'lsa "?"]
 
 E'TIROZLAR:
 "Qimmat" desa: "Qayerda ko'rdingiz?" de
@@ -447,6 +450,14 @@ def parse_response(response: str) -> tuple[str, dict]:
                 "marka": parts[0] if parts else "?",
                 "miqdor": parts[1] if len(parts) > 1 else "?",
             }
+        elif upper.startswith("NARX_KELISHUV:"):
+            value = line.strip().split(":", 1)[1].strip()
+            parts = [p.strip() for p in value.split("|")]
+            markers["narx_kelishuv"] = {
+                "marka": parts[0] if parts else "?",
+                "taklif": parts[1] if len(parts) > 1 else "?",
+                "asl": parts[2] if len(parts) > 2 else "?",
+            }
         elif any(upper.startswith(m.upper()) for m in _INTERNAL_MARKERS):
             pass
         else:
@@ -587,6 +598,40 @@ async def on_incoming_message(event):
             except Exception as e:
                 await event.respond(f"Xato: {e}")
             return
+
+        # Narx kelishuv — BOSS tasdiqlash yoki rad etish
+        if pending_price_negotiations:
+            low = text.strip().lower()
+            if any(w in low for w in ["ha ", "ruxsat", "beramiz", "bo'ladi", "boladi", "ok", "roziman"]) or low in {"ha", "ok"}:
+                price_digits = re.sub(r"[^\d\s]", " ", text)
+                price_match = re.search(r"\d[\d ]*\d|\d{4,}", price_digits)
+                customer_id, data = list(pending_price_negotiations.items())[-1]
+                agreed_raw = re.sub(r"\s", "", price_match.group()) if price_match else data.get("taklif", "")
+                marka = data.get("marka", "")
+                try:
+                    agreed_fmt = f"{int(agreed_raw):,}"
+                    agreed_text = f"{marka} narxi {agreed_fmt} so'm/kg"
+                except (ValueError, TypeError):
+                    agreed_text = f"{marka} bo'yicha chegirma"
+                await client.send_message(
+                    customer_id,
+                    f"Yaxshi xabar! {agreed_text} qabul qilindi. To'lov turini tasdiqlaysizmi?"
+                )
+                pending_price_negotiations.pop(customer_id, None)
+                await event.respond(f"Mijozga yuborildi: {agreed_text}")
+                return
+            elif is_negative(text):
+                customer_id, data = list(pending_price_negotiations.items())[-1]
+                marka = data.get("marka", "")
+                asl = data.get("asl", "")
+                asl_part = f"{asl} so'm/kg — bu " if asl and asl != "?" else ""
+                await client.send_message(
+                    customer_id,
+                    f"{marka} narxi {asl_part}yakuniy narximiz."
+                )
+                pending_price_negotiations.pop(customer_id, None)
+                await event.respond("Mijozga yakuniy narx yuborildi.")
+                return
 
         # "yo'q" — bank o'tkazma rad etildi
         if is_negative(text) and pending_bank_requests:
@@ -755,6 +800,19 @@ async def on_incoming_message(event):
         boss_msg = f"{name} bank o'tkazma{miqdor_part} so'rayapti, {req['marka']} narx qancha?"
         await client.send_message(BOSS_CHAT_ID, boss_msg)
         logger.info(f"Bank narx so'rovi BOSS ga yuborildi: {boss_msg}")
+
+    if "narx_kelishuv" in markers:
+        data = markers["narx_kelishuv"]
+        pending_price_negotiations[sender_id] = data
+        titled = name_title(clients_db[sender_id].get("name", ""))
+        marka = data["marka"]
+        taklif = data["taklif"]
+        if taklif and taklif != "?":
+            boss_msg = f"{titled} chegirma so'rayapti — {marka} {taklif} so'm/kg qilib bersak bo'ladimi?"
+        else:
+            boss_msg = f"{titled} chegirma so'rayapti — {marka} bo'yicha chegirma beramizmi?"
+        await client.send_message(BOSS_CHAT_ID, boss_msg)
+        logger.info(f"Narx kelishuv BOSS ga: {boss_msg}")
 
     if customer_text:
         await event.respond(customer_text)
