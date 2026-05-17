@@ -243,11 +243,12 @@ async def get_ai_response(chat_id: int, user_message: str) -> str:
 
 @client.on(events.NewMessage(incoming=True))
 async def on_incoming_message(event):
-    if not event.is_private:
-        return
-
     sender_id = event.sender_id
     text = (event.message.text or "").strip()
+    logger.info(f"Xabar keldi: {sender_id} - {text[:80]!r}")
+
+    if not event.is_private:
+        return
 
     # BOSS narx xabari yuborsa — saqlash
     if sender_id == BOSS_CHAT_ID:
