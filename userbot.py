@@ -34,6 +34,7 @@ last_price_message: str | None = None
 conversations: dict = {}        # {chat_id: [{"role": ..., "content": ...}]}
 clients_db: dict = {}           # {chat_id: {"name": ..., "telegram": ...}}
 pending_price_requests: dict = {}  # {customer_id: {"marka": str, "miqdor": str}}
+pending_bank_requests: dict = {}   # {customer_id: {"marka": str, "miqdor": str}}
 
 
 SYSTEM_PROMPT = """Sen Nargiza - Petro Plast kompaniyasining savdo menedjeri.
@@ -126,6 +127,10 @@ E'TIROZLAR:
 "O'ylab ko'raman" desa: "Narxdan tashqari boshqa savol bormi?"
 "Boshqa joy arzon" desa: "Qancha farq bor?" de
 
+BANK O'TKAZMA SO'RASA (mijoz "bank o'tkazma", "plastik", "karta", "o'tkazma" so'zlarini ishlatsa):
+- "Aniqlab beraman" de, keyin yangi qatorda:
+BANK_NARX_KUTILMOQDA: [marka] | [miqdor, yo'q bo'lsa "?"]
+
 MUDDATLI TO'LOV SO'RASA:
 - "Hozircha to'lov naqd yoki bank o'tkazma orqali amalga oshiriladi." de
 
@@ -217,7 +222,7 @@ TOLOV_KEY = "To’lov"
 
 _INTERNAL_MARKERS = (
     "ISSIQ_LID", "ISM:", "NARX_KELISHUV:", "NARX_KUTILMOQDA:",
-    "NOMA_LUM_MARKA:", "TEXNIK SAVOL:",
+    "BANK_NARX_KUTILMOQDA:", "NOMA_LUM_MARKA:", "TEXNIK SAVOL:",
 )
 
 
@@ -238,11 +243,23 @@ def parse_response(response: str) -> tuple[str, dict]:
                 "marka": parts[0] if parts else "?",
                 "miqdor": parts[1] if len(parts) > 1 else "?",
             }
+        elif upper.startswith("BANK_NARX_KUTILMOQDA:"):
+            value = line.strip().split(":", 1)[1].strip()
+            parts = [p.strip() for p in value.split("|")]
+            markers["bank_narx_kutilmoqda"] = {
+                "marka": parts[0] if parts else "?",
+                "miqdor": parts[1] if len(parts) > 1 else "?",
+            }
         elif any(upper.startswith(m.upper()) for m in _INTERNAL_MARKERS):
             pass
         else:
             customer_lines.append(line)
     return "\n".join(customer_lines).strip(), markers
+
+
+def is_negative(text: str) -> bool:
+    low = text.strip().lower()
+    return low in {"yo'q", "yoq", "mumkin emas", "rad", "no", "bo'lmaydi", "bolmaydi"}
 
 
 def extract_single_price(text: str) -> int | None:
@@ -314,9 +331,45 @@ async def on_incoming_message(event):
         if not text:
             return
 
+        # "yo'q" — bank o'tkazma rad etildi
+        if is_negative(text) and pending_bank_requests:
+            customer_id, req = list(pending_bank_requests.items())[-1]
+            pending_bank_requests.pop(customer_id)
+            c = clients_db.get(customer_id, {})
+            await client.send_message(
+                customer_id,
+                "Hozirda faqat naqd to'lov qabul qilamiz."
+            )
+            logger.info(f"Bank rad: {c.get('name', customer_id)} ga xabar yuborildi.")
+            return
+
         parsed_prices = parse_price_list(text)
 
-        # Pending mijozlardan marka mos keladiganlarini topib xabardor qil
+        # Bank o'tkazma so'rovlari — mos marka topilsa darhol yuborish
+        for customer_id, req in list(pending_bank_requests.items()):
+            matched_key, price = match_marka(req["marka"], parsed_prices)
+            if price is None:
+                single = extract_single_price(text)
+                if single is None:
+                    continue
+                matched_key, price = req["marka"], single
+            c = clients_db.get(customer_id, {})
+            name = c.get("name", "")
+            miqdor = req["miqdor"]
+            prefix = f"{name}, yaxshi xabar! " if name else "Yaxshi xabar! "
+            msg = f"{prefix}{matched_key} bank o'tkazma narxi: {price:,} so'm/kg."
+            if miqdor and miqdor != "?":
+                msg += f"\n{miqdor} uchun buyurtmani tasdiqlaysizmi?"
+            else:
+                msg += "\nBuyurtmani tasdiqlaysizmi?"
+            try:
+                await client.send_message(customer_id, msg)
+                pending_bank_requests.pop(customer_id)
+                logger.info(f"Bank narx yuborildi: {name} — {matched_key} = {price:,}")
+            except Exception as e:
+                logger.error(f"Bank narx yuborishda xato ({customer_id}): {e}")
+
+        # Naqd narx so'rovlari — mos marka topilsa darhol yuborish
         notified = []
         for customer_id, req in list(pending_price_requests.items()):
             matched_key, price = match_marka(req["marka"], parsed_prices)
@@ -410,6 +463,15 @@ async def on_incoming_message(event):
         boss_msg = f"{name} {req['marka']}{miqdor_part} so'rayapti, narx qancha?"
         await client.send_message(BOSS_CHAT_ID, boss_msg)
         logger.info(f"Narx so'rovi BOSS ga yuborildi: {boss_msg}")
+
+    if "bank_narx_kutilmoqda" in markers:
+        req = markers["bank_narx_kutilmoqda"]
+        pending_bank_requests[sender_id] = req
+        name = clients_db[sender_id].get("name", "")
+        miqdor_part = f"dan {req['miqdor']}" if req["miqdor"] != "?" else ""
+        boss_msg = f"{name} bank o'tkazma{miqdor_part} so'rayapti, {req['marka']} narx qancha?"
+        await client.send_message(BOSS_CHAT_ID, boss_msg)
+        logger.info(f"Bank narx so'rovi BOSS ga yuborildi: {boss_msg}")
 
     if customer_text:
         await event.respond(customer_text)
