@@ -145,7 +145,15 @@ SIFAT HUJJATI YOKI SERTIFIKAT SO'RASA:
 - "Ha, barcha mahsulotlarda sertifikat bor. Kerakli markani ayting, yuboray." de
 
 MAHSULOT QACHON KELISHI SO'RASA:
-- "Mavjud stokdan — 1-2 ish kuni ichida. Buyurtma bo'lsa — alohida aniqlayman." de"""
+- "Mavjud stokdan — 1-2 ish kuni ichida. Buyurtma bo'lsa — alohida aniqlayman." de
+
+KOMPANIYA MA'LUMOTLARI (so'ralganda ayt):
+- Kompaniya: Petro Plast
+- Manzil: Toshkent, Eshonguzar ko'chasi (sklad)
+- Ish vaqti: Dushanba-Shanba, 09:00-18:00
+- Minimal buyurtma: 500 kg
+- Yetkazib berish: manzil va miqdorga qarab kelishiladi
+- Sifat sertifikati: barcha mahsulotlarda mavjud"""
 
 
 # ── Yordamchi funksiyalar ──────────────────────────────────────────────────────
@@ -387,6 +395,41 @@ async def on_incoming_message(event):
     # BOSS xabari
     if sender_id == BOSS_CHAT_ID:
         if not text:
+            return
+
+        # /yordam — barcha buyruqlar ro'yxati
+        if text.strip().lower() == "/yordam":
+            pending_names = ", ".join(
+                clients_db[cid].get("name", str(cid))
+                for cid in list(pending_price_requests) + list(pending_bank_requests)
+            ) or "yo'q"
+            await event.respond(
+                "Buyruqlar:\n"
+                "/yordam — shu ro'yxat\n"
+                "/yoz [ism] [xabar] — mijozga xabar yuborish\n\n"
+                f"Narx kutayotganlar: {pending_names}\n"
+                f"Jami mijozlar: {len(clients_db)}"
+            )
+            return
+
+        # /yoz [ism] [xabar]
+        if text.lower().startswith("/yoz "):
+            parts = text[5:].strip().split(None, 1)
+            if len(parts) < 2:
+                await event.respond("Format: /yoz [ism] [xabar]\nMasalan: /yoz Jasur Kelasizmi bugun?")
+                return
+            search_name, message_body = parts[0].lower(), parts[1]
+            found = [(cid, c) for cid, c in clients_db.items()
+                     if c.get("name", "").lower().startswith(search_name)]
+            if not found:
+                await event.respond(f"'{parts[0]}' ismli mijoz topilmadi.")
+                return
+            customer_id, customer = found[-1]
+            try:
+                await client.send_message(customer_id, message_body)
+                await event.respond(f"Yuborildi: {customer.get('name')} {customer.get('telegram', '')}")
+            except Exception as e:
+                await event.respond(f"Xato: {e}")
             return
 
         # "yo'q" — bank o'tkazma rad etildi
