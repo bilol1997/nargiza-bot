@@ -1,15 +1,26 @@
 import asyncio
+import base64
 import json
 import logging
 import os
 import re
+import time
+import urllib.parse
 from datetime import datetime
 
 import anthropic
 import pytz
+import requests as _http
 from telethon import TelegramClient, events
 from telethon.sessions import StringSession
 from telethon.tl.types import Channel, Chat
+
+try:
+    from cryptography.hazmat.primitives import hashes, serialization
+    from cryptography.hazmat.primitives.asymmetric import padding as _rsa_padding
+    _CRYPTO_OK = True
+except ImportError:
+    _CRYPTO_OK = False
 
 logging.basicConfig(
     format="%(asctime)s - %(levelname)s - %(message)s",
@@ -28,7 +39,12 @@ TASHKENT = pytz.timezone("Asia/Tashkent")
 claude = anthropic.Anthropic(api_key=CLAUDE_API_KEY)
 client = TelegramClient(StringSession(SESSION_STRING), API_ID, API_HASH)
 
-CLIENTS_DB_FILE = "clients_db.json"
+CLIENTS_DB_FILE  = "clients_db.json"  # JSON fallback
+_SHEETS_ID       = os.environ.get("GOOGLE_SHEET_ID", "")
+_GC_RAW          = os.environ.get("GOOGLE_CREDENTIALS", "")
+_MIJOZLAR_SHEET  = "Mijozlar"
+_SHEETS_BASE     = f"https://sheets.googleapis.com/v4/spreadsheets/{_SHEETS_ID}"
+_token_cache: dict = {"token": None, "exp": 0}
 
 last_price_message: str | None = None
 conversations: dict = {}        # {chat_id: [{"role": ..., "content": ...}]}
@@ -211,23 +227,138 @@ def name_title(name: str) -> str:
     return name
 
 
-def save_clients_db() -> None:
+def _save_clients_json() -> None:
     try:
         with open(CLIENTS_DB_FILE, "w", encoding="utf-8") as f:
             json.dump({str(k): v for k, v in clients_db.items()}, f, ensure_ascii=False, indent=2)
     except Exception as e:
-        logger.error(f"clients_db saqlashda xato: {e}")
+        logger.error(f"JSON saqlashda xato: {e}")
 
 
-def load_clients_db() -> dict:
+def _load_clients_json() -> dict:
     try:
         with open(CLIENTS_DB_FILE, encoding="utf-8") as f:
             return {int(k): v for k, v in json.load(f).items()}
     except FileNotFoundError:
         return {}
     except Exception as e:
-        logger.error(f"clients_db yuklashda xato: {e}")
+        logger.error(f"JSON yuklashda xato: {e}")
         return {}
+
+
+# ── Google Sheets (mijozlar xotirasi) ─────────────────────────────────────────
+
+def _b64url(data: bytes) -> str:
+    return base64.urlsafe_b64encode(data).rstrip(b"=").decode()
+
+
+def _get_sheets_token() -> str | None:
+    if not _GC_RAW or not _CRYPTO_OK or not _SHEETS_ID:
+        return None
+    now = int(time.time())
+    if _token_cache["token"] and now < _token_cache["exp"]:
+        return _token_cache["token"]
+    try:
+        info = json.loads(_GC_RAW)
+        info["private_key"] = info["private_key"].replace("\\n", "\n")
+    except Exception as e:
+        logger.error(f"GOOGLE_CREDENTIALS parse xatosi: {e}")
+        return None
+    try:
+        header  = _b64url(json.dumps({"alg": "RS256", "typ": "JWT"}).encode())
+        payload = _b64url(json.dumps({
+            "iss": info["client_email"],
+            "scope": "https://www.googleapis.com/auth/spreadsheets",
+            "aud": "https://oauth2.googleapis.com/token",
+            "iat": now, "exp": now + 3600,
+        }).encode())
+        msg = f"{header}.{payload}".encode()
+        pk  = serialization.load_pem_private_key(info["private_key"].encode(), password=None)
+        sig = pk.sign(msg, _rsa_padding.PKCS1v15(), hashes.SHA256())
+        jwt = f"{header}.{payload}.{_b64url(sig)}"
+    except Exception as e:
+        logger.error(f"JWT xatosi: {e}")
+        return None
+    try:
+        resp  = _http.post("https://oauth2.googleapis.com/token",
+                           data={"grant_type": "urn:ietf:params:oauth:grant-type:jwt-bearer",
+                                 "assertion": jwt}, timeout=10)
+        token = resp.json().get("access_token")
+        _token_cache.update({"token": token, "exp": now + 3000})
+        return token
+    except Exception as e:
+        logger.error(f"Sheets token xatosi: {e}")
+        return None
+
+
+def _sheets_ensure_mijozlar(token: str) -> None:
+    hdrs = {"Authorization": f"Bearer {token}"}
+    rng  = urllib.parse.quote(f"{_MIJOZLAR_SHEET}!A1:D1", safe="")
+    r    = _http.get(f"{_SHEETS_BASE}/values/{rng}", headers=hdrs, timeout=10)
+    if r.ok and r.json().get("values"):
+        return
+    meta   = _http.get(_SHEETS_BASE, headers=hdrs, timeout=10)
+    titles = [s["properties"]["title"] for s in meta.json().get("sheets", [])] if meta.ok else []
+    if _MIJOZLAR_SHEET not in titles:
+        _http.post(f"{_SHEETS_BASE}:batchUpdate", headers=hdrs, timeout=10,
+                   json={"requests": [{"addSheet": {"properties": {"title": _MIJOZLAR_SHEET}}}]})
+    _http.put(f"{_SHEETS_BASE}/values/{rng}", headers=hdrs, timeout=10,
+              params={"valueInputOption": "RAW"},
+              json={"values": [["chat_id", "name", "telegram", "sana"]]})
+
+
+def sheets_load_clients() -> dict:
+    token = _get_sheets_token()
+    if not token:
+        logger.warning("Sheets token yo'q — JSON fayldan yuklanadi.")
+        return _load_clients_json()
+    try:
+        rng  = urllib.parse.quote(f"{_MIJOZLAR_SHEET}!A:D", safe="")
+        r    = _http.get(f"{_SHEETS_BASE}/values/{rng}",
+                         headers={"Authorization": f"Bearer {token}"}, timeout=15)
+        if not r.ok:
+            logger.error(f"Sheets yuklash {r.status_code} — JSON fallback.")
+            return _load_clients_json()
+        rows   = r.json().get("values", [])
+        result = {}
+        for row in rows[1:]:
+            if not row:
+                continue
+            try:
+                cid = int(row[0])
+                result[cid] = {
+                    "name":     row[1] if len(row) > 1 else "",
+                    "telegram": row[2] if len(row) > 2 else "",
+                }
+            except (ValueError, IndexError):
+                continue
+        logger.info(f"Sheets dan {len(result)} ta mijoz yuklandi.")
+        return result
+    except Exception as e:
+        logger.error(f"Sheets yuklashda xato: {e}")
+        return _load_clients_json()
+
+
+def sheets_save_client(chat_id: int, data: dict) -> None:
+    token = _get_sheets_token()
+    if not token:
+        _save_clients_json()
+        return
+    try:
+        rng = urllib.parse.quote(f"{_MIJOZLAR_SHEET}!A:D", safe="")
+        row = [
+            str(chat_id),
+            data.get("name", ""),
+            data.get("telegram", ""),
+            datetime.now(TASHKENT).strftime("%Y-%m-%d %H:%M"),
+        ]
+        _http.post(f"{_SHEETS_BASE}/values/{rng}:append",
+                   headers={"Authorization": f"Bearer {token}"},
+                   params={"valueInputOption": "RAW", "insertDataOption": "INSERT_ROWS"},
+                   json={"values": [row]}, timeout=10)
+    except Exception as e:
+        logger.error(f"Sheets saqlashda xato: {e}")
+        _save_clients_json()
 
 
 def match_marka(stored: str, parsed: dict):
@@ -560,7 +691,7 @@ async def on_incoming_message(event):
             "name": getattr(sender, "first_name", "") or "",
             "telegram": username,
         }
-        save_clients_db()
+        asyncio.create_task(asyncio.to_thread(sheets_save_client, sender_id, clients_db[sender_id]))
         logger.info(f"Yangi mijoz: {clients_db[sender_id]['name']} {username}")
 
     response = await get_ai_response(sender_id, text)
@@ -568,7 +699,7 @@ async def on_incoming_message(event):
 
     if "ism" in markers:
         clients_db[sender_id]["name"] = markers["ism"]
-        save_clients_db()
+        asyncio.create_task(asyncio.to_thread(sheets_save_client, sender_id, clients_db[sender_id]))
 
     if "issiq_lid" in markers:
         phone = extract_phone(text) if has_valid_phone(text) else "?"
@@ -660,7 +791,14 @@ async def announcer():
 
 async def main():
     global clients_db
-    clients_db = load_clients_db()
+    if _SHEETS_ID and _GC_RAW:
+        token = _get_sheets_token()
+        if token:
+            _sheets_ensure_mijozlar(token)
+        clients_db = sheets_load_clients()
+    else:
+        logger.warning("GOOGLE_SHEET_ID yoki GOOGLE_CREDENTIALS yo'q — JSON fayldan yuklanadi.")
+        clients_db = _load_clients_json()
     logger.info(f"clients_db yuklandi: {len(clients_db)} ta mijoz")
 
     session_len = len(SESSION_STRING.strip())
