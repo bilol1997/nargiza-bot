@@ -114,6 +114,9 @@ NARX SO'RALGANDA (mijoz "narxi qancha?" desa):
 - NARXLAR bo'limida narxi bor bo'lsa - narxni ayt va savdo davom ettir
 - NARXLAR bo'limida narxi yo'q bo'lsa - "Narxini bugun aniqlab sizga xabar beraman" de, keyin yangi qatorda:
 NARX_KUTILMOQDA: [marka] | [mijoz aytgan miqdor, agar aytilmagan bo'lsa "?"]
+- Mijoz aniq marka ko'rsatmay "arzonrog'ini", "shunaqa", "ana shuni" kabi noaniq so'z ishlatsa:
+  suhbat tarixidan barcha muhokama qilingan markalarni ol, vergul bilan yoz:
+NARX_KUTILMOQDA: [marka1, marka2] | [miqdor]
 - HECH QACHON "boshlig'im bilan gaplashaman" dema — bu faqat chegirma so'raganda
 
 NARX KELISHUVI — FAQAT mijoz BIRINCHI marta "qimmat", "arzonroq qiling", "chegirma bering" desa:
@@ -293,10 +296,11 @@ def parse_response(response: str) -> tuple[str, dict]:
         elif upper.startswith("NARX_KUTILMOQDA:"):
             value = line.strip().split(":", 1)[1].strip()
             parts = [p.strip() for p in value.split("|")]
-            markers["narx_kutilmoqda"] = {
-                "marka": parts[0] if parts else "?",
-                "miqdor": parts[1] if len(parts) > 1 else "?",
-            }
+            markalar = [m.strip() for m in parts[0].split(",") if m.strip()]
+            miqdor = parts[1] if len(parts) > 1 else "?"
+            markers["narx_kutilmoqda"] = [
+                {"marka": m, "miqdor": miqdor} for m in (markalar or ["?"])
+            ]
         elif upper.startswith("BANK_NARX_KUTILMOQDA:"):
             value = line.strip().split(":", 1)[1].strip()
             parts = [p.strip() for p in value.split("|")]
@@ -329,7 +333,7 @@ def extract_single_price(text: str) -> int | None:
     return None
 
 
-def build_lead_card(chat_id: int, phone_text: str, response_text: str) -> str:
+def build_lead_card(chat_id: int, phone: str, response_text: str) -> str:
     c = clients_db.get(chat_id, {})
     details = {}
     for line in response_text.strip().split("\n")[1:]:
@@ -340,7 +344,7 @@ def build_lead_card(chat_id: int, phone_text: str, response_text: str) -> str:
         f"ISSIQ LID! (userbot)\n"
         f"Ism: {c.get('name', '?')}\n"
         f"Telegram: {c.get('telegram', 'nomalum')}\n"
-        f"Telefon: {extract_phone(phone_text)}\n"
+        f"Telefon: {phone}\n"
         f"Marka: {details.get('Marka', '?')}\n"
         f"Miqdor: {details.get('Miqdor', '?')}\n"
         f"Narx: {details.get('Narx', '?')}\n"
@@ -443,38 +447,44 @@ async def on_incoming_message(event):
                 except Exception as e:
                     logger.error(f"Bank narx yuborishda xato ({customer_id}): {e}")
 
-        # Naqd narx so'rovlari — brand mos kelsa yuborish
+        # Naqd narx so'rovlari — har bir mijozning barcha brendlari bo'yicha tekshirish
         notified = []
-        for customer_id, req in list(pending_price_requests.items()):
-            matched_key, price = match_marka(req["marka"], parsed_prices)
-            if price is None:
-                continue
+        for customer_id, req_list in list(pending_price_requests.items()):
             c = clients_db.get(customer_id, {})
             titled = name_title(c.get("name", ""))
-            miqdor = req["miqdor"]
-            prefix = f"{titled}, yaxshi xabar! " if titled else "Yaxshi xabar! "
-            msg = f"{prefix}{matched_key} narxi: {price:,} so'm/kg."
-            if miqdor and miqdor != "?":
-                msg += f"\n{miqdor} uchun buyurtmani tasdiqlaysizmi?"
-            else:
-                msg += "\nBuyurtmani tasdiqlaysizmi?"
-            try:
-                await client.send_message(customer_id, msg)
+            answered = []
+            for req in req_list:
+                matched_key, price = match_marka(req["marka"], parsed_prices)
+                if price is None:
+                    continue
+                miqdor = req["miqdor"]
+                prefix = f"{titled}, yaxshi xabar! " if titled else "Yaxshi xabar! "
+                msg = f"{prefix}{matched_key} narxi: {price:,} so'm/kg."
+                if miqdor and miqdor != "?":
+                    msg += f"\n{miqdor} uchun buyurtmani tasdiqlaysizmi?"
+                else:
+                    msg += "\nBuyurtmani tasdiqlaysizmi?"
+                try:
+                    await client.send_message(customer_id, msg)
+                    answered.append(req)
+                    notified.append(f"{titled or customer_id} ({matched_key})")
+                    logger.info(f"Narx yuborildi: {titled} — {matched_key} = {price:,}")
+                except Exception as e:
+                    logger.error(f"Narx yuborishda xato ({customer_id}): {e}")
+            for r in answered:
+                req_list.remove(r)
+            if not req_list:
                 pending_price_requests.pop(customer_id)
-                notified.append(f"{titled or customer_id} ({matched_key})")
-                logger.info(f"Narx yuborildi: {titled} — {matched_key} = {price:,}")
-            except Exception as e:
-                logger.error(f"Narx yuborishda xato ({customer_id}): {e}")
 
-        # Faqat raqam yuborganda — oxirgi naqd so'ragan mijozga
+        # Faqat raqam yuborganda — oxirgi naqd so'ragan mijozning oxirgi brendiga
         if not notified and pending_price_requests:
             single = extract_single_price(text)
             if single is not None:
-                customer_id, req = list(pending_price_requests.items())[-1]
+                customer_id, req_list = list(pending_price_requests.items())[-1]
                 c = clients_db.get(customer_id, {})
                 titled = name_title(c.get("name", ""))
-                marka = req["marka"]
-                miqdor = req["miqdor"]
+                req = req_list[-1]
+                marka, miqdor = req["marka"], req["miqdor"]
                 prefix = f"{titled}, yaxshi xabar! " if titled else "Yaxshi xabar! "
                 msg = f"{prefix}{marka} narxi: {single:,} so'm/kg."
                 if miqdor and miqdor != "?":
@@ -483,8 +493,10 @@ async def on_incoming_message(event):
                     msg += "\nBuyurtmani tasdiqlaysizmi?"
                 try:
                     await client.send_message(customer_id, msg)
-                    pending_price_requests.pop(customer_id)
-                    logger.info(f"Narx yuborildi: {titled} — {marka} = {single:,}")
+                    req_list.remove(req)
+                    if not req_list:
+                        pending_price_requests.pop(customer_id)
+                    logger.info(f"Narx (single) yuborildi: {titled} — {marka} = {single:,}")
                 except Exception as e:
                     logger.error(f"Narx yuborishda xato ({customer_id}): {e}")
 
@@ -516,27 +528,25 @@ async def on_incoming_message(event):
         save_clients_db()
 
     if "issiq_lid" in markers:
-        if not has_valid_phone(text):
-            await event.respond("Telefon raqamingizni yuboring.")
-            if conversations.get(sender_id):
-                conversations[sender_id][-1]["content"] = "Telefon raqamini so'radim."
-            return
+        phone = extract_phone(text) if has_valid_phone(text) else "?"
         await event.respond("Rahmat, tez orada bog'lanamiz.")
-        card = build_lead_card(sender_id, text, response)
+        card = build_lead_card(sender_id, phone, response)
         await client.send_message(BOSS_CHAT_ID, card)
-        logger.info(f"Issiq lid BOSS ga yuborildi: {clients_db[sender_id].get('name', sender_id)}")
+        logger.info(f"Issiq lid BOSS ga yuborildi: {clients_db[sender_id].get('name', sender_id)} tel={phone}")
         if conversations.get(sender_id):
             conversations[sender_id][-1]["content"] = "Rahmat, tez orada bog'lanamiz."
         return
 
     if "narx_kutilmoqda" in markers:
-        req = markers["narx_kutilmoqda"]
-        pending_price_requests[sender_id] = req
-        name = clients_db[sender_id].get("name", "")
-        miqdor_part = f"dan {req['miqdor']}" if req["miqdor"] != "?" else ""
-        boss_msg = f"{name} {req['marka']}{miqdor_part} so'rayapti, narx qancha?"
+        req_list = markers["narx_kutilmoqda"]
+        pending_price_requests[sender_id] = req_list
+        titled = name_title(clients_db[sender_id].get("name", ""))
+        markalar_str = ", ".join(r["marka"] for r in req_list)
+        miqdor = req_list[0]["miqdor"] if req_list else "?"
+        miqdor_part = f" ({miqdor})" if miqdor != "?" else ""
+        boss_msg = f"{titled} {markalar_str}{miqdor_part} narxini so'rayapti, qancha?"
         await client.send_message(BOSS_CHAT_ID, boss_msg)
-        logger.info(f"Narx so'rovi BOSS ga yuborildi: {boss_msg}")
+        logger.info(f"Narx so'rovi BOSS ga: {boss_msg}")
 
     if "bank_narx_kutilmoqda" in markers:
         req = markers["bank_narx_kutilmoqda"]
