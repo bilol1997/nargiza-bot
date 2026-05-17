@@ -6,7 +6,7 @@ import os
 import re
 import time
 import urllib.parse
-from datetime import datetime
+from datetime import datetime, timedelta
 
 import anthropic
 import pytz
@@ -52,6 +52,9 @@ clients_db: dict = {}           # {chat_id: {"name": ..., "telegram": ...}}
 pending_price_requests: dict = {}        # {customer_id: {"marka": str, "miqdor": str}}
 pending_bank_requests: dict = {}         # {customer_id: {"marka": str, "miqdor": str}}
 pending_price_negotiations: dict = {}    # {customer_id: {"marka": str, "taklif": str, "asl": str}}
+
+FOLLOW_UPS_FILE = "follow_ups.json"
+follow_ups: list = []
 
 
 SYSTEM_PROMPT = """Sen Nargiza - Petro Plast kompaniyasining savdo menedjeri.
@@ -247,6 +250,41 @@ def _load_clients_json() -> dict:
     except Exception as e:
         logger.error(f"JSON yuklashda xato: {e}")
         return {}
+
+
+# ── Qayta aloqa (follow-up) tizimi ───────────────────────────────────────────
+
+def _load_follow_ups() -> list:
+    try:
+        with open(FOLLOW_UPS_FILE, encoding="utf-8") as f:
+            return json.load(f)
+    except FileNotFoundError:
+        return []
+    except Exception as e:
+        logger.error(f"Follow-ups yuklashda xato: {e}")
+        return []
+
+
+def _save_follow_ups() -> None:
+    try:
+        with open(FOLLOW_UPS_FILE, "w", encoding="utf-8") as f:
+            json.dump(follow_ups, f, ensure_ascii=False, indent=2)
+    except Exception as e:
+        logger.error(f"Follow-ups saqlashda xato: {e}")
+
+
+def schedule_follow_up(ftype: str, customer_id: int, marka: str, days: int) -> None:
+    now_ts = datetime.now(TASHKENT).timestamp()
+    follow_ups.append({
+        "type": ftype,
+        "customer_id": customer_id,
+        "marka": marka,
+        "created_ts": now_ts,
+        "send_ts": now_ts + days * 86400,
+        "sent": False,
+    })
+    asyncio.create_task(asyncio.to_thread(_save_follow_ups))
+    logger.info(f"Follow-up rejalashtirildi: {ftype} | cid={customer_id} | {days} kun")
 
 
 # ── Google Sheets (mijozlar xotirasi) ─────────────────────────────────────────
@@ -666,6 +704,7 @@ async def on_incoming_message(event):
                 await client.send_message(customer_id, msg)
                 pending_bank_requests.pop(customer_id)
                 bank_notified.append(customer_id)
+                schedule_follow_up("narx_javob_yoq", customer_id, matched_key, 3)
                 logger.info(f"Bank narx yuborildi: {titled} — {matched_key} = {price:,}")
             except Exception as e:
                 logger.error(f"Bank narx yuborishda xato ({customer_id}): {e}")
@@ -687,6 +726,7 @@ async def on_incoming_message(event):
                 try:
                     await client.send_message(customer_id, msg)
                     pending_bank_requests.pop(customer_id)
+                    schedule_follow_up("narx_javob_yoq", customer_id, req["marka"], 3)
                     logger.info(f"Bank narx (single) yuborildi: {titled} = {single:,}")
                 except Exception as e:
                     logger.error(f"Bank narx yuborishda xato ({customer_id}): {e}")
@@ -712,6 +752,7 @@ async def on_incoming_message(event):
                     await client.send_message(customer_id, msg)
                     answered.append(req)
                     notified.append(f"{titled or customer_id} ({matched_key})")
+                    schedule_follow_up("narx_javob_yoq", customer_id, matched_key, 3)
                     logger.info(f"Narx yuborildi: {titled} — {matched_key} = {price:,}")
                 except Exception as e:
                     logger.error(f"Narx yuborishda xato ({customer_id}): {e}")
@@ -740,6 +781,7 @@ async def on_incoming_message(event):
                     req_list.remove(req)
                     if not req_list:
                         pending_price_requests.pop(customer_id)
+                    schedule_follow_up("narx_javob_yoq", customer_id, marka, 3)
                     logger.info(f"Narx (single) yuborildi: {titled} — {marka} = {single:,}")
                 except Exception as e:
                     logger.error(f"Narx yuborishda xato ({customer_id}): {e}")
@@ -764,6 +806,8 @@ async def on_incoming_message(event):
         asyncio.create_task(asyncio.to_thread(sheets_save_client, sender_id, clients_db[sender_id]))
         logger.info(f"Yangi mijoz: {clients_db[sender_id]['name']} {username}")
 
+    clients_db[sender_id]["last_msg_ts"] = datetime.now(TASHKENT).timestamp()
+
     response = await get_ai_response(sender_id, text)
     customer_text, markers = parse_response(response)
 
@@ -777,6 +821,16 @@ async def on_incoming_message(event):
         card = build_lead_card(sender_id, phone, response)
         await client.send_message(BOSS_CHAT_ID, card)
         logger.info(f"Issiq lid BOSS ga yuborildi: {clients_db[sender_id].get('name', sender_id)} tel={phone}")
+        # Marka ni ajratib olish
+        lid_details = {}
+        for line in response.strip().split("\n")[1:]:
+            if ":" in line:
+                k, v = line.split(":", 1)
+                lid_details[k.strip()] = v.strip()
+        lid_marka = lid_details.get("Marka", "mahsulot")
+        clients_db[sender_id]["had_issiq_lid"] = True
+        clients_db[sender_id]["last_marka"] = lid_marka
+        schedule_follow_up("issiq_lid", sender_id, lid_marka, 4)
         if conversations.get(sender_id):
             conversations[sender_id][-1]["content"] = "Rahmat, tez orada bog'lanamiz."
         return
@@ -791,6 +845,8 @@ async def on_incoming_message(event):
         boss_msg = f"{titled} {markalar_str}{miqdor_part} narxini so'rayapti, qancha?"
         await client.send_message(BOSS_CHAT_ID, boss_msg)
         logger.info(f"Narx so'rovi BOSS ga: {boss_msg}")
+        if req_list:
+            clients_db[sender_id]["last_marka"] = req_list[0]["marka"]
 
     if "bank_narx_kutilmoqda" in markers:
         req = markers["bank_narx_kutilmoqda"]
@@ -853,6 +909,73 @@ async def send_to_all_groups():
     logger.info(f"E'lon natijasi: {ok} yuborildi, {fail} xato.")
 
 
+async def follow_up_checker():
+    await asyncio.sleep(60)
+    while True:
+        now = datetime.now(TASHKENT)
+        now_ts = now.timestamp()
+        # Faqat ish vaqtida yuborish
+        if not (9 <= now.hour < 18):
+            await asyncio.sleep(3600)
+            continue
+
+        changed = False
+
+        # Type 1 (narx_javob_yoq) va Type 2 (issiq_lid): rejalashtirilgan follow-uplar
+        for fu in follow_ups:
+            if fu["sent"] or now_ts < fu["send_ts"]:
+                continue
+            customer_id = fu["customer_id"]
+            c = clients_db.get(customer_id, {})
+            # Mijoz scheduled dan keyin javob bergan bo'lsa — o'tkazib yuborish
+            if c.get("last_msg_ts", 0) > fu["created_ts"]:
+                fu["sent"] = True
+                changed = True
+                logger.info(f"Follow-up o'tkazildi (mijoz javob berdi): {fu['type']} | {customer_id}")
+                continue
+            titled = name_title(c.get("name", "")) or "Salom"
+            marka = fu["marka"]
+            if fu["type"] == "narx_javob_yoq":
+                msg = f"{titled}, salom! O'sha {marka} bo'yicha so'ragan edingiz — hozir ham kerak bo'lsa, ayting?"
+            elif fu["type"] == "issiq_lid":
+                msg = f"{titled}, salom! {marka} bo'yicha gaplashgan edik — qaror qildingizmi?"
+            else:
+                continue
+            try:
+                await client.send_message(customer_id, msg)
+                fu["sent"] = True
+                changed = True
+                logger.info(f"Follow-up yuborildi: {fu['type']} | {customer_id} | {marka}")
+            except Exception as e:
+                logger.error(f"Follow-up xato ({customer_id}): {e}")
+
+        # Type 3: doimiy mijoz 10 kun javob yo'q
+        for customer_id, c in list(clients_db.items()):
+            if not c.get("had_issiq_lid"):
+                continue
+            last_ts = c.get("last_msg_ts", 0)
+            if not last_ts or (now_ts - last_ts) < 10 * 86400:
+                continue
+            # Oxirgi type-3 yuborilganidan 20 kun o'tmagan bo'lsa o'tkazib yuborish
+            if (now_ts - c.get("last_f3_ts", 0)) < 20 * 86400:
+                continue
+            marka = c.get("last_marka", "mahsulot")
+            titled = name_title(c.get("name", "")) or "Salom"
+            msg = f"{titled}, salom! {marka} qoldiqlari tugab qolmadimi? Yangi partiya bor."
+            try:
+                await client.send_message(customer_id, msg)
+                clients_db[customer_id]["last_f3_ts"] = now_ts
+                changed = True
+                logger.info(f"Doimiy mijoz follow-up: {customer_id} | {marka}")
+            except Exception as e:
+                logger.error(f"Doimiy mijoz follow-up xato ({customer_id}): {e}")
+
+        if changed:
+            asyncio.create_task(asyncio.to_thread(_save_follow_ups))
+
+        await asyncio.sleep(3600)
+
+
 async def announcer():
     while True:
         now = datetime.now(TASHKENT)
@@ -874,7 +997,9 @@ async def announcer():
 # ── Main ───────────────────────────────────────────────────────────────────────
 
 async def main():
-    global clients_db
+    global clients_db, follow_ups
+    follow_ups = _load_follow_ups()
+    logger.info(f"Follow-ups yuklandi: {len(follow_ups)} ta")
     if _SHEETS_ID and _GC_RAW:
         token = _get_sheets_token()
         if token:
@@ -906,6 +1031,7 @@ async def main():
 
     await asyncio.gather(
         announcer(),
+        follow_up_checker(),
         client.run_until_disconnected(),
     )
 
