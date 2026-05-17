@@ -1,3 +1,4 @@
+import asyncio
 import os
 import re
 import json
@@ -5,7 +6,8 @@ import time
 import base64
 import logging
 import urllib.parse
-from datetime import datetime
+from datetime import datetime, timedelta
+import pytz
 import anthropic
 import openai
 import requests as _http
@@ -28,6 +30,7 @@ import tempfile
 logging.basicConfig(format="%(asctime)s - %(name)s - %(levelname)s - %(message)s", level=logging.INFO)
 logger = logging.getLogger(__name__)
 
+TASHKENT = pytz.timezone("Asia/Tashkent")
 TELEGRAM_TOKEN = os.environ.get("TELEGRAM_TOKEN")
 CLAUDE_API_KEY = os.environ.get("CLAUDE_API_KEY")
 OPENAI_API_KEY = os.environ.get("OPENAI_API_KEY")
@@ -184,10 +187,156 @@ def sheets_add_lead(name, phone, marka, miqdor, tolov, narx, holat="Yangi lid"):
 conversations = {}
 clients_db = {}
 current_prices = {}
-# {customer_chat_id: {'marka': str, 'taklif_narx': str, 'asl_narx': str}}
 pending_price_negotiations = {}
-# {customer_chat_id: {'marka': str, 'miqdor': str}}
 pending_price_requests = {}
+
+FOLLOW_UPS_FILE = "follow_ups_bot.json"
+follow_ups: list = []
+
+
+_MALE_NAMES = {
+    "jasur", "jamshid", "bobur", "sardor", "sanjar", "sherzod", "shahzod",
+    "ulugbek", "laziz", "otabek", "alisher", "nodir", "mansur", "rustam",
+    "doston", "timur", "bahodir", "murod", "oybek", "diyorbek", "bekzod",
+    "farrux", "islom", "eldor", "umid", "akbar", "kamol", "zafar", "davron",
+    "firdavs", "jahongir", "abror", "mirzo", "dilshod", "hamza", "anvar",
+    "nuriddin", "ilhom", "elmurod", "qodir", "tohir", "elbek", "komil",
+    "muzaffar", "ibrohim", "ismoil", "yusuf", "abdulloh", "muhammad", "ahmad",
+    "ali", "umar", "rahim", "nurbek", "ravshan", "shuhrat", "suxrob", "vohid",
+    "xurshid", "hasan", "husayn", "javlon", "bahrom", "behruz", "bilol",
+    "botirbek", "bunyod", "bunyodbek", "doniyor", "erkin", "farhod", "furqat",
+    "hayot", "hikmat", "humoyun", "iskandar", "javohir", "lochin", "mustafo",
+    "nozim", "nurillo", "obid", "ortiq", "ozod", "rauf", "salim", "sarvar",
+    "sirojiddin", "sobir", "sodiq", "sulton", "toxir", "ulmas", "uygun",
+    "xasan", "yahyo", "yoqub", "zafarjon", "zohid", "abdulaziz", "asliddin",
+    "asror", "azamat", "azizbek", "baxtiyor", "doniybek", "eldorbek",
+    "feruzbek", "husan", "husanboy", "islombek", "kenja", "muxammad",
+    "nurullo", "ortiqboy", "otajon", "sarvarjon", "sunnat", "tohirjon",
+    "xurshidbek", "zokirjon", "bekhzod", "bexruz",
+}
+
+_FEMALE_NAMES = {
+    "nargiza", "malika", "zulfiya", "dilnoza", "feruza", "kamola", "ozoda",
+    "maftuna", "nilufar", "shahnoza", "sarvinoz", "muazzam", "mohira",
+    "lobar", "gulsanam", "barno", "nafisa", "aziza", "madina", "dilorom",
+    "nasiba", "sabohat", "oydin", "rayhona", "kumush", "hulkar", "gulnora",
+    "sevinch", "latofat", "manzura", "iroda", "farzona", "lola", "munira",
+    "surayyo", "tabassum", "umida", "yulduz", "zuhra", "gavhar", "dildora",
+    "hamida", "nozima", "qunduz", "sitora", "holida", "mavluda", "xurmo",
+    "oysha", "robiya", "saodat", "sadoqat", "shahlo", "shirin", "soliha",
+    "sultana", "xilola", "adolat", "bahora", "dilrabo", "dilfuza", "farida",
+    "farangiz", "fotima", "gulbahor", "gulnoza", "hilola", "jamila",
+    "komila", "malohat", "mashxura", "mavzuna", "mohichehra", "mohinur",
+    "mukaddas", "nafosat", "nodira", "noila", "parizod", "ruxshona", "sevara",
+    "shoira", "shohida", "tursunoy", "xadicha", "zamira", "zarnigor",
+    "ziyoda", "nafosatxon", "mahliyo", "mohlaroyim",
+}
+
+
+def name_title(name: str) -> str:
+    if not name:
+        return name
+    first = name.strip().split()[0].lower()
+    if first in _MALE_NAMES:
+        return f"{name} aka"
+    if first in _FEMALE_NAMES:
+        return f"{name} opa"
+    return name
+
+
+def _load_follow_ups() -> list:
+    try:
+        with open(FOLLOW_UPS_FILE, encoding="utf-8") as f:
+            return json.load(f)
+    except FileNotFoundError:
+        return []
+    except Exception as e:
+        logger.error(f"Follow-ups yuklashda xato: {e}")
+        return []
+
+
+def _save_follow_ups() -> None:
+    try:
+        with open(FOLLOW_UPS_FILE, "w", encoding="utf-8") as f:
+            json.dump(follow_ups, f, ensure_ascii=False, indent=2)
+    except Exception as e:
+        logger.error(f"Follow-ups saqlashda xato: {e}")
+
+
+def schedule_follow_up(ftype: str, customer_id: int, marka: str, days: int) -> None:
+    now_ts = time.time()
+    follow_ups.append({
+        "type": ftype,
+        "customer_id": customer_id,
+        "marka": marka,
+        "created_ts": now_ts,
+        "send_ts": now_ts + days * 86400,
+        "sent": False,
+    })
+    _save_follow_ups()
+    logger.info(f"Follow-up rejalashtirildi: {ftype} | cid={customer_id} | {days} kun")
+
+
+async def follow_up_checker(bot) -> None:
+    await asyncio.sleep(60)
+    while True:
+        now = datetime.now(TASHKENT)
+        now_ts = time.time()
+        if not (9 <= now.hour < 18):
+            await asyncio.sleep(3600)
+            continue
+
+        changed = False
+
+        for fu in follow_ups:
+            if fu["sent"] or now_ts < fu["send_ts"]:
+                continue
+            customer_id = fu["customer_id"]
+            c = clients_db.get(customer_id, {})
+            if c.get("last_msg_ts", 0) > fu["created_ts"]:
+                fu["sent"] = True
+                changed = True
+                logger.info(f"Follow-up o'tkazildi (mijoz javob berdi): {fu['type']} | {customer_id}")
+                continue
+            titled = name_title(c.get("name", "")) or "Salom"
+            marka = fu["marka"]
+            if fu["type"] == "narx_javob_yoq":
+                msg = f"{titled}, salom! O'sha {marka} bo'yicha so'ragan edingiz — hozir ham kerak bo'lsa, ayting?"
+            elif fu["type"] == "issiq_lid":
+                msg = f"{titled}, salom! {marka} bo'yicha gaplashgan edik — qaror qildingizmi?"
+            else:
+                continue
+            try:
+                await bot.send_message(chat_id=customer_id, text=msg)
+                fu["sent"] = True
+                changed = True
+                logger.info(f"Follow-up yuborildi: {fu['type']} | {customer_id} | {marka}")
+            except Exception as e:
+                logger.error(f"Follow-up xato ({customer_id}): {e}")
+
+        for customer_id, c in list(clients_db.items()):
+            if not c.get("had_issiq_lid"):
+                continue
+            last_ts = c.get("last_msg_ts", 0)
+            if not last_ts or (now_ts - last_ts) < 10 * 86400:
+                continue
+            if (now_ts - c.get("last_f3_ts", 0)) < 20 * 86400:
+                continue
+            marka = c.get("last_marka", "mahsulot")
+            titled = name_title(c.get("name", "")) or "Salom"
+            msg = f"{titled}, salom! {marka} qoldiqlari tugab qolmadimi? Yangi partiya bor."
+            try:
+                await bot.send_message(chat_id=customer_id, text=msg)
+                clients_db[customer_id]["last_f3_ts"] = now_ts
+                changed = True
+                logger.info(f"Doimiy mijoz follow-up: {customer_id} | {marka}")
+            except Exception as e:
+                logger.error(f"Doimiy mijoz follow-up xato ({customer_id}): {e}")
+
+        if changed:
+            _save_follow_ups()
+
+        await asyncio.sleep(3600)
 
 
 SYSTEM_PROMPT = """Sen Nargiza - Petro Plast kompaniyasining savdo menedjeri.
@@ -490,16 +639,20 @@ async def handle_response(chat_id, text, response, update, context):
             if ':' in line:
                 k, v = line.split(':', 1)
                 details[k.strip()] = v.strip()
+        lid_marka = details.get('Marka', 'mahsulot')
         sheets_add_lead(
             name=c.get('name', '?'),
             phone=extract_phone(text),
-            marka=details.get('Marka', '?'),
+            marka=lid_marka,
             miqdor=details.get('Miqdor', '?'),
             tolov=details.get("To'lov", '?'),
             narx=details.get('Narx', '?'),
         )
         if chat_id in clients_db:
             clients_db[chat_id]['category'] = 'Issiq'
+            clients_db[chat_id]['had_issiq_lid'] = True
+            clients_db[chat_id]['last_marka'] = lid_marka
+        schedule_follow_up("issiq_lid", chat_id, lid_marka, 4)
         if chat_id in conversations and conversations[chat_id]:
             conversations[chat_id][-1]['content'] = "Rahmat, tez orada bog'lanamiz."
         return
@@ -576,6 +729,8 @@ async def handle_response(chat_id, text, response, update, context):
         marka = parts[0] if parts else '?'
         miqdor = parts[1] if len(parts) > 1 else '?'
         pending_price_requests[chat_id] = {'marka': marka, 'miqdor': miqdor}
+        if chat_id in clients_db:
+            clients_db[chat_id]['last_marka'] = marka
         c = clients_db.get(chat_id, {})
         miqdor_text = f", {miqdor}" if miqdor and miqdor != '?' else ""
         await notify_boss(
@@ -678,6 +833,7 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     if ok:
                         pending_price_requests.pop(cust_id, None)
                         notified.append(f"{name or cust_id} ({matched_key})")
+                        schedule_follow_up("narx_javob_yoq", cust_id, matched_key, 3)
                     else:
                         failed.append(f"{name or cust_id} ({matched_key}) — xabar yetmadi!")
                 status_lines = []
@@ -725,8 +881,10 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 if total is not None:
                     msg += f"\n{miqdor_str} uchun jami: {int(total):,} so'm."
             msg += "\nBuyurtmani tasdiqlaysizmi?"
-            await send_customer(context, cust_id, msg)
+            ok = await send_customer(context, cust_id, msg)
             pending_price_requests.pop(cust_id, None)
+            if ok:
+                schedule_follow_up("narx_javob_yoq", cust_id, marka, 3)
             await update.message.reply_text(f"Yuborildi: {msg}")
             return
 
@@ -765,6 +923,15 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
             return
 
         return
+
+    if chat_id not in clients_db:
+        clients_db[chat_id] = {
+            'name': update.effective_user.first_name or '',
+            'telegram': f"@{update.effective_user.username}" if update.effective_user.username else '',
+            'category': 'Yangi',
+            'date': datetime.now().strftime("%Y-%m-%d %H:%M")
+        }
+    clients_db[chat_id]['last_msg_ts'] = time.time()
 
     response = await get_nargiza_response(chat_id, text)
     await handle_response(chat_id, text, response, update, context)
@@ -903,7 +1070,14 @@ async def cmd_yordam(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 def main():
-    app = Application.builder().token(TELEGRAM_TOKEN).build()
+    global follow_ups
+    follow_ups = _load_follow_ups()
+    logger.info(f"Follow-ups yuklandi: {len(follow_ups)} ta")
+
+    async def post_init(app: Application) -> None:
+        asyncio.create_task(follow_up_checker(app.bot))
+
+    app = Application.builder().token(TELEGRAM_TOKEN).post_init(post_init).build()
     app.add_handler(CommandHandler("start", start))
     app.add_handler(CommandHandler("narx", cmd_narx))
     app.add_handler(CommandHandler("holat_ozgartir", cmd_holat_ozgartir))
