@@ -49,6 +49,7 @@ ASOSIY QOIDALAR:
 7. Imlo xatosiz yoz
 8. Savol bersang - faqat bitta savol ber
 9. HECH QACHON HDPE, LDPE, LLDPE, PP, PVC, ABS, PS, HIPS, GPPS, PET kabi kimyoviy nomlarni ishlatma - faqat marka nomi bilan gapir
+10. Ismga murojaat: erkak O'zbek ismi bo'lsa "aka", ayol ismi bo'lsa "opa" qo'sh. Masalan: "Jasur aka", "Malika opa"
 
 BIZDA BOR MARKALAR:
 LDPE: 153 Kazan, 158 Kazan, 108 Kazan, 153 Sibur Tomsk, 158 Sibur Tomsk, 30200 Sibur Tomsk, 0200 Iran, 158 Socar, 158 Belarus, 158 Ufa, 2102 Laleh, 2102 Campaund, 2119 Arya Sasol, 2420D Amir Kabir, 120 LG Korea
@@ -145,6 +146,59 @@ MAHSULOT QACHON KELISHI SO'RASA:
 
 
 # ── Yordamchi funksiyalar ──────────────────────────────────────────────────────
+
+_MALE_NAMES = {
+    "jasur", "jamshid", "bobur", "sardor", "sanjar", "sherzod", "shahzod",
+    "ulugbek", "laziz", "otabek", "alisher", "nodir", "mansur", "rustam",
+    "doston", "timur", "bahodir", "murod", "oybek", "diyorbek", "bekzod",
+    "farrux", "islom", "eldor", "umid", "akbar", "kamol", "zafar", "davron",
+    "firdavs", "jahongir", "abror", "mirzo", "dilshod", "hamza", "anvar",
+    "nuriddin", "ilhom", "elmurod", "qodir", "tohir", "elbek", "komil",
+    "muzaffar", "ibrohim", "ismoil", "yusuf", "abdulloh", "muhammad", "ahmad",
+    "ali", "umar", "rahim", "nurbek", "ravshan", "shuhrat", "suxrob", "vohid",
+    "xurshid", "hasan", "husayn", "kamoliddin", "javlon", "bahrom", "behruz",
+    "bilol", "botirbek", "bunyod", "bunyodbek", "doniyor", "erkin", "farhod",
+    "faridun", "fazliddin", "furqat", "hayot", "hikmat", "humoyun", "iskandar",
+    "javohir", "lochin", "lochinbek", "mustafo", "nozim", "nurillo", "obid",
+    "ortiq", "ozod", "rauf", "salim", "sarvar", "sarvarbek", "sirojiddin",
+    "sobir", "sodiq", "sulton", "toxir", "ulmas", "uygun", "xasan", "yahyo",
+    "yoqub", "zafar", "zafarjon", "zohid", "zubaydullo", "shamsiddin",
+    "abdulaziz", "abdulhamid", "asliddin", "asror", "azamat", "azizbek",
+    "baxtiyor", "doniybek", "eldorbek", "fattoh", "feruzbek", "husan",
+    "husanboy", "husanjon", "islombek", "jabbor", "kenja", "muxammad",
+    "nurullo", "ortiqboy", "otajon", "ravzaali", "sarvarjon", "sunnat",
+    "tohirjon", "xasanboy", "xurshidbek", "zokirjon", "bekhzod", "bexruz",
+}
+
+_FEMALE_NAMES = {
+    "nargiza", "malika", "zulfiya", "dilnoza", "feruza", "kamola", "ozoda",
+    "maftuna", "nilufar", "shahnoza", "sarvinoz", "muazzam", "mohira",
+    "lobar", "gulsanam", "barno", "nafisa", "aziza", "madina", "dilorom",
+    "nasiba", "sabohat", "oydin", "rayhona", "kumush", "hulkar", "gulnora",
+    "sevinch", "latofat", "manzura", "iroda", "farzona", "lola", "munira",
+    "surayyo", "tabassum", "umida", "yulduz", "zuhra", "gavhar", "dildora",
+    "hamida", "nozima", "qunduz", "sitora", "holida", "mavluda", "xurmo",
+    "oysha", "robiya", "saodat", "sadoqat", "shahlo", "shirin", "soliha",
+    "sultana", "xilola", "adolat", "bahora", "dilrabo", "dilfuza", "farida",
+    "farangiz", "fotima", "gulbahor", "gulnoza", "hilola", "jamila",
+    "kamolaxon", "komila", "malohat", "mashxura", "mavzuna", "mohichehra",
+    "mohinur", "mukaddas", "nafosat", "nodira", "noila", "parizod",
+    "ruxshona", "sevara", "shoira", "shohida", "tursunoy", "xadicha",
+    "zamira", "zarnigor", "ziyoda", "nafosatxon", "mahliyo", "mohlaroyim",
+}
+
+
+def name_title(name: str) -> str:
+    """O'zbek ismi bo'yicha 'aka' yoki 'opa' qo'shadi."""
+    if not name:
+        return name
+    first = name.strip().split()[0].lower()
+    if first in _MALE_NAMES:
+        return f"{name} aka"
+    if first in _FEMALE_NAMES:
+        return f"{name} opa"
+    return name
+
 
 def save_clients_db() -> None:
     try:
@@ -345,18 +399,16 @@ async def on_incoming_message(event):
 
         parsed_prices = parse_price_list(text)
 
-        # Bank o'tkazma so'rovlari — mos marka topilsa darhol yuborish
+        # Bank so'rovlari — brand mos kelsa yuborish
+        bank_notified = []
         for customer_id, req in list(pending_bank_requests.items()):
             matched_key, price = match_marka(req["marka"], parsed_prices)
             if price is None:
-                single = extract_single_price(text)
-                if single is None:
-                    continue
-                matched_key, price = req["marka"], single
+                continue
             c = clients_db.get(customer_id, {})
-            name = c.get("name", "")
+            titled = name_title(c.get("name", ""))
             miqdor = req["miqdor"]
-            prefix = f"{name}, yaxshi xabar! " if name else "Yaxshi xabar! "
+            prefix = f"{titled}, yaxshi xabar! " if titled else "Yaxshi xabar! "
             msg = f"{prefix}{matched_key} bank o'tkazma narxi: {price:,} so'm/kg."
             if miqdor and miqdor != "?":
                 msg += f"\n{miqdor} uchun buyurtmani tasdiqlaysizmi?"
@@ -365,20 +417,42 @@ async def on_incoming_message(event):
             try:
                 await client.send_message(customer_id, msg)
                 pending_bank_requests.pop(customer_id)
-                logger.info(f"Bank narx yuborildi: {name} — {matched_key} = {price:,}")
+                bank_notified.append(customer_id)
+                logger.info(f"Bank narx yuborildi: {titled} — {matched_key} = {price:,}")
             except Exception as e:
                 logger.error(f"Bank narx yuborishda xato ({customer_id}): {e}")
 
-        # Naqd narx so'rovlari — mos marka topilsa darhol yuborish
+        # Faqat raqam yuborganda — oxirgi bank so'ragan mijozga (priority)
+        if not bank_notified and pending_bank_requests:
+            single = extract_single_price(text)
+            if single is not None:
+                customer_id, req = list(pending_bank_requests.items())[-1]
+                c = clients_db.get(customer_id, {})
+                titled = name_title(c.get("name", ""))
+                miqdor = req["miqdor"]
+                prefix = f"{titled}, yaxshi xabar! " if titled else "Yaxshi xabar! "
+                msg = f"{prefix}{req['marka']} bank o'tkazma narxi: {single:,} so'm/kg."
+                if miqdor and miqdor != "?":
+                    msg += f"\n{miqdor} uchun buyurtmani tasdiqlaysizmi?"
+                else:
+                    msg += "\nBuyurtmani tasdiqlaysizmi?"
+                try:
+                    await client.send_message(customer_id, msg)
+                    pending_bank_requests.pop(customer_id)
+                    logger.info(f"Bank narx (single) yuborildi: {titled} = {single:,}")
+                except Exception as e:
+                    logger.error(f"Bank narx yuborishda xato ({customer_id}): {e}")
+
+        # Naqd narx so'rovlari — brand mos kelsa yuborish
         notified = []
         for customer_id, req in list(pending_price_requests.items()):
             matched_key, price = match_marka(req["marka"], parsed_prices)
             if price is None:
                 continue
             c = clients_db.get(customer_id, {})
-            name = c.get("name", "")
+            titled = name_title(c.get("name", ""))
             miqdor = req["miqdor"]
-            prefix = f"{name}, yaxshi xabar! " if name else "Yaxshi xabar! "
+            prefix = f"{titled}, yaxshi xabar! " if titled else "Yaxshi xabar! "
             msg = f"{prefix}{matched_key} narxi: {price:,} so'm/kg."
             if miqdor and miqdor != "?":
                 msg += f"\n{miqdor} uchun buyurtmani tasdiqlaysizmi?"
@@ -387,21 +461,21 @@ async def on_incoming_message(event):
             try:
                 await client.send_message(customer_id, msg)
                 pending_price_requests.pop(customer_id)
-                notified.append(f"{name or customer_id} ({matched_key})")
-                logger.info(f"Narx yuborildi: {name} — {matched_key} = {price:,}")
+                notified.append(f"{titled or customer_id} ({matched_key})")
+                logger.info(f"Narx yuborildi: {titled} — {matched_key} = {price:,}")
             except Exception as e:
                 logger.error(f"Narx yuborishda xato ({customer_id}): {e}")
 
-        # Faqat raqam yuborganda (brand ko'rsatilmagan) — oxirgi pending mijozga
+        # Faqat raqam yuborganda — oxirgi naqd so'ragan mijozga
         if not notified and pending_price_requests:
             single = extract_single_price(text)
             if single is not None:
                 customer_id, req = list(pending_price_requests.items())[-1]
                 c = clients_db.get(customer_id, {})
-                name = c.get("name", "")
+                titled = name_title(c.get("name", ""))
                 marka = req["marka"]
                 miqdor = req["miqdor"]
-                prefix = f"{name}, yaxshi xabar! " if name else "Yaxshi xabar! "
+                prefix = f"{titled}, yaxshi xabar! " if titled else "Yaxshi xabar! "
                 msg = f"{prefix}{marka} narxi: {single:,} so'm/kg."
                 if miqdor and miqdor != "?":
                     msg += f"\n{miqdor} uchun buyurtmani tasdiqlaysizmi?"
@@ -410,7 +484,7 @@ async def on_incoming_message(event):
                 try:
                     await client.send_message(customer_id, msg)
                     pending_price_requests.pop(customer_id)
-                    logger.info(f"Narx yuborildi: {name} — {marka} = {single:,}")
+                    logger.info(f"Narx yuborildi: {titled} — {marka} = {single:,}")
                 except Exception as e:
                     logger.error(f"Narx yuborishda xato ({customer_id}): {e}")
 
