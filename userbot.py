@@ -350,12 +350,19 @@ async def announcer():
 # ── Main ───────────────────────────────────────────────────────────────────────
 
 async def main():
-    await client.connect()
-    if not await client.is_user_authorized():
-        logger.error("SESSION_STRING yaroqsiz! generate_session.py ni qayta ishlatng.")
+    session_len = len(SESSION_STRING.strip())
+    logger.info(f"SESSION_STRING uzunligi: {session_len} belgi")
+    if session_len < 100:
+        logger.error("SESSION_STRING juda qisqa — Railway da to'g'ri o'rnatilganmi?")
         return
+
+    await client.start()
+
     me = await client.get_me()
-    logger.info(f"Userbot ishga tushdi: {me.first_name} (@{me.username})")
+    if me is None:
+        logger.error("get_me() None qaytardi — session yaroqsiz.")
+        return
+    logger.info(f"Userbot ishga tushdi: id={me.id} | first_name={me.first_name!r} | username={me.username!r} | phone={me.phone!r}")
 
     groups = await get_all_groups()
     logger.info(f"Topilgan guruhlar ({len(groups)} ta):")
