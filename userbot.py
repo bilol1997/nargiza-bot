@@ -13,7 +13,7 @@ import pytz
 import requests as _http
 from telethon import TelegramClient, events
 from telethon.sessions import StringSession
-from telethon.tl.types import Channel, Chat
+from telethon.tl.types import Channel, Chat, MessageMediaContact
 
 try:
     from cryptography.hazmat.primitives import hashes, serialization
@@ -92,7 +92,7 @@ ANIQ TEXNIK MA'LUMOT (MFI, zichlik, xarakteristika) kerak bo'lsa:
 "Texnik ma'lumotni aniqlab beraman" de
 
 AFZALLIKLAR:
-- 25 kg dan buyurtma
+- Minimal buyurtma 500 kg
 - Xarakteristika bor
 - Tezkor javob 24/7
 
@@ -525,6 +525,31 @@ async def on_incoming_message(event):
 
     # BOSS xabari
     if sender_id == BOSS_CHAT_ID:
+        # BOSS kontakt yubordi — o'sha odamga birinchi yoz
+        if isinstance(event.message.media, MessageMediaContact):
+            contact = event.message.media
+            target_id = contact.user_id
+            if not target_id:
+                await event.respond("Bu kontaktning Telegram ID si yo'q, xabar yuborib bo'lmadi.")
+                return
+            first_name = (contact.first_name or "").strip()
+            if target_id not in clients_db:
+                clients_db[target_id] = {"name": first_name, "telegram": ""}
+                asyncio.create_task(asyncio.to_thread(sheets_save_client, target_id, clients_db[target_id]))
+            titled = name_title(first_name) if first_name else ""
+            greeting = (
+                f"Salom{', ' + titled if titled else ''}! "
+                f"Men Nargiza — Petro Plast kompaniyasining savdo menejeri. "
+                f"Qanday yordam bera olaman?"
+            )
+            try:
+                await client.send_message(target_id, greeting)
+                await event.respond(f"Yuborildi: {first_name or target_id}")
+                logger.info(f"Kontakt orqali yangi mijozga salomlashildi: {first_name} (id={target_id})")
+            except Exception as e:
+                await event.respond(f"Xabar yuborishda xato: {e}")
+            return
+
         if not text:
             return
 
