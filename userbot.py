@@ -174,6 +174,8 @@ def has_valid_phone(text: str) -> bool:
     return len(digits) >= 9 and not all(c.isalpha() for c in text.strip())
 
 
+TOLOV_KEY = "To’lov"
+
 _INTERNAL_MARKERS = (
     "ISSIQ_LID", "ISM:", "NARX_KELISHUV:", "NARX_KUTILMOQDA:",
     "NOMA_LUM_MARKA:", "TEXNIK SAVOL:",
@@ -212,7 +214,7 @@ def build_lead_card(chat_id: int, phone_text: str, response_text: str) -> str:
         f"Marka: {details.get('Marka', '?')}\n"
         f"Miqdor: {details.get('Miqdor', '?')}\n"
         f"Narx: {details.get('Narx', '?')}\n"
-        f"To'lov: {details.get(\"To'lov\", '?')}"
+        f"To'lov: {details.get(TOLOV_KEY, '?')}"
     )
 
 
