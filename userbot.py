@@ -241,56 +241,53 @@ async def get_ai_response(chat_id: int, user_message: str) -> str:
 
 # ── Event handlerlar ───────────────────────────────────────────────────────────
 
-@client.on(events.NewMessage(
-    incoming=True,
-    func=lambda e: e.is_private and e.sender_id == BOSS_CHAT_ID,
-))
-async def on_boss_message(event):
-    global last_price_message
-    text = event.message.text
-    if text and text.strip():
-        last_price_message = text.strip()
-        logger.info("BOSS yangi narx xabari saqlandi.")
+@client.on(events.NewMessage(incoming=True))
+async def on_incoming_message(event):
+    if not event.is_private:
+        return
 
-
-@client.on(events.NewMessage(
-    incoming=True,
-    func=lambda e: e.is_private and e.sender_id != BOSS_CHAT_ID,
-))
-async def on_private_message(event):
-    chat_id = event.sender_id
+    sender_id = event.sender_id
     text = (event.message.text or "").strip()
+
+    # BOSS narx xabari yuborsa — saqlash
+    if sender_id == BOSS_CHAT_ID:
+        global last_price_message
+        if text:
+            last_price_message = text
+            logger.info("BOSS yangi narx xabari saqlandi.")
+        return
+
+    # Mijoz xabari
     if not text:
         return
 
-    # Yangi mijoz — ma'lumotlarini saqla
-    if chat_id not in clients_db:
+    if sender_id not in clients_db:
         sender = await event.get_sender()
         username = f"@{sender.username}" if getattr(sender, "username", None) else ""
-        clients_db[chat_id] = {
+        clients_db[sender_id] = {
             "name": getattr(sender, "first_name", "") or "",
             "telegram": username,
         }
-        logger.info(f"Yangi mijoz: {clients_db[chat_id]['name']} {username}")
+        logger.info(f"Yangi mijoz: {clients_db[sender_id]['name']} {username}")
 
-    response = await get_ai_response(chat_id, text)
+    response = await get_ai_response(sender_id, text)
     customer_text, markers = parse_response(response)
 
     if "ism" in markers:
-        clients_db[chat_id]["name"] = markers["ism"]
+        clients_db[sender_id]["name"] = markers["ism"]
 
     if "issiq_lid" in markers:
         if not has_valid_phone(text):
             await event.respond("Telefon raqamingizni yuboring.")
-            if conversations.get(chat_id):
-                conversations[chat_id][-1]["content"] = "Telefon raqamini so'radim."
+            if conversations.get(sender_id):
+                conversations[sender_id][-1]["content"] = "Telefon raqamini so'radim."
             return
         await event.respond("Rahmat, tez orada bog'lanamiz.")
-        card = build_lead_card(chat_id, text, response)
+        card = build_lead_card(sender_id, text, response)
         await client.send_message(BOSS_CHAT_ID, card)
-        logger.info(f"Issiq lid BOSS ga yuborildi: {clients_db[chat_id].get('name', chat_id)}")
-        if conversations.get(chat_id):
-            conversations[chat_id][-1]["content"] = "Rahmat, tez orada bog'lanamiz."
+        logger.info(f"Issiq lid BOSS ga yuborildi: {clients_db[sender_id].get('name', sender_id)}")
+        if conversations.get(sender_id):
+            conversations[sender_id][-1]["content"] = "Rahmat, tez orada bog'lanamiz."
         return
 
     if customer_text:
