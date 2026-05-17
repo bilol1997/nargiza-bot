@@ -784,7 +784,8 @@ async def send_to_all_groups():
     ok, fail = 0, 0
     for dialog in groups:
         try:
-            await client.send_message(dialog.id, last_price_message)
+            msg = last_price_message + "\n\n📞 +998907080000\n✈️ @nargiza_petroplast"
+            await client.send_message(dialog.id, msg)
             logger.info(f"  [OK] {dialog.name}")
             ok += 1
             await asyncio.sleep(1)
