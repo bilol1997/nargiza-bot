@@ -1,4 +1,5 @@
 import asyncio
+import json
 import logging
 import os
 import re
@@ -26,6 +27,8 @@ TASHKENT = pytz.timezone("Asia/Tashkent")
 
 claude = anthropic.Anthropic(api_key=CLAUDE_API_KEY)
 client = TelegramClient(StringSession(SESSION_STRING), API_ID, API_HASH)
+
+CLIENTS_DB_FILE = "clients_db.json"
 
 last_price_message: str | None = None
 conversations: dict = {}        # {chat_id: [{"role": ..., "content": ...}]}
@@ -137,6 +140,40 @@ MAHSULOT QACHON KELISHI SO'RASA:
 
 
 # ── Yordamchi funksiyalar ──────────────────────────────────────────────────────
+
+def save_clients_db() -> None:
+    try:
+        with open(CLIENTS_DB_FILE, "w", encoding="utf-8") as f:
+            json.dump({str(k): v for k, v in clients_db.items()}, f, ensure_ascii=False, indent=2)
+    except Exception as e:
+        logger.error(f"clients_db saqlashda xato: {e}")
+
+
+def load_clients_db() -> dict:
+    try:
+        with open(CLIENTS_DB_FILE, encoding="utf-8") as f:
+            return {int(k): v for k, v in json.load(f).items()}
+    except FileNotFoundError:
+        return {}
+    except Exception as e:
+        logger.error(f"clients_db yuklashda xato: {e}")
+        return {}
+
+
+def match_marka(stored: str, parsed: dict):
+    """Marka nomini parsed dict da moslashtirib topadi (case-insensitive, prefix)."""
+    if stored in parsed:
+        return stored, parsed[stored]
+    s = stored.strip().upper()
+    for k, v in parsed.items():
+        if k.strip().upper() == s:
+            return k, v
+    for k, v in parsed.items():
+        kc = k.strip().upper()
+        if s.startswith(kc) or kc.startswith(s):
+            return k, v
+    return None, None
+
 
 def parse_price_list(text: str) -> dict:
     prices = {}
@@ -276,27 +313,58 @@ async def on_incoming_message(event):
     if sender_id == BOSS_CHAT_ID:
         if not text:
             return
-        # Pending narx so'roviga javob berganmi?
-        price = extract_single_price(text) if pending_price_requests else None
-        if price is not None:
-            customer_id, req = list(pending_price_requests.items())[-1]
+
+        parsed_prices = parse_price_list(text)
+
+        # Pending mijozlardan marka mos keladiganlarini topib xabardor qil
+        notified = []
+        for customer_id, req in list(pending_price_requests.items()):
+            matched_key, price = match_marka(req["marka"], parsed_prices)
+            if price is None:
+                continue
             c = clients_db.get(customer_id, {})
             name = c.get("name", "")
-            marka = req["marka"]
             miqdor = req["miqdor"]
             prefix = f"{name}, yaxshi xabar! " if name else "Yaxshi xabar! "
-            msg = f"{prefix}{marka} narxi: {price:,} so'm/kg."
+            msg = f"{prefix}{matched_key} narxi: {price:,} so'm/kg."
             if miqdor and miqdor != "?":
                 msg += f"\n{miqdor} uchun buyurtmani tasdiqlaysizmi?"
             else:
                 msg += "\nBuyurtmani tasdiqlaysizmi?"
-            await client.send_message(customer_id, msg)
-            pending_price_requests.pop(customer_id, None)
-            logger.info(f"Narx javob yuborildi {name} ga: {marka} = {price:,}")
-        else:
-            global last_price_message
-            last_price_message = text
-            logger.info("BOSS yangi narx xabari saqlandi.")
+            try:
+                await client.send_message(customer_id, msg)
+                pending_price_requests.pop(customer_id)
+                notified.append(f"{name or customer_id} ({matched_key})")
+                logger.info(f"Narx yuborildi: {name} — {matched_key} = {price:,}")
+            except Exception as e:
+                logger.error(f"Narx yuborishda xato ({customer_id}): {e}")
+
+        # Faqat raqam yuborganda (brand ko'rsatilmagan) — oxirgi pending mijozga
+        if not notified and pending_price_requests:
+            single = extract_single_price(text)
+            if single is not None:
+                customer_id, req = list(pending_price_requests.items())[-1]
+                c = clients_db.get(customer_id, {})
+                name = c.get("name", "")
+                marka = req["marka"]
+                miqdor = req["miqdor"]
+                prefix = f"{name}, yaxshi xabar! " if name else "Yaxshi xabar! "
+                msg = f"{prefix}{marka} narxi: {single:,} so'm/kg."
+                if miqdor and miqdor != "?":
+                    msg += f"\n{miqdor} uchun buyurtmani tasdiqlaysizmi?"
+                else:
+                    msg += "\nBuyurtmani tasdiqlaysizmi?"
+                try:
+                    await client.send_message(customer_id, msg)
+                    pending_price_requests.pop(customer_id)
+                    logger.info(f"Narx yuborildi: {name} — {marka} = {single:,}")
+                except Exception as e:
+                    logger.error(f"Narx yuborishda xato ({customer_id}): {e}")
+
+        global last_price_message
+        last_price_message = text
+        notified_str = ", ".join(notified) if notified else "yo'q"
+        logger.info(f"BOSS narx xabari saqlandi. Xabardor qilingan: {notified_str}")
         return
 
     # Mijoz xabari
@@ -310,6 +378,7 @@ async def on_incoming_message(event):
             "name": getattr(sender, "first_name", "") or "",
             "telegram": username,
         }
+        save_clients_db()
         logger.info(f"Yangi mijoz: {clients_db[sender_id]['name']} {username}")
 
     response = await get_ai_response(sender_id, text)
@@ -317,6 +386,7 @@ async def on_incoming_message(event):
 
     if "ism" in markers:
         clients_db[sender_id]["name"] = markers["ism"]
+        save_clients_db()
 
     if "issiq_lid" in markers:
         if not has_valid_phone(text):
@@ -400,6 +470,10 @@ async def announcer():
 # ── Main ───────────────────────────────────────────────────────────────────────
 
 async def main():
+    global clients_db
+    clients_db = load_clients_db()
+    logger.info(f"clients_db yuklandi: {len(clients_db)} ta mijoz")
+
     session_len = len(SESSION_STRING.strip())
     logger.info(f"SESSION_STRING uzunligi: {session_len} belgi")
     if session_len < 100:
