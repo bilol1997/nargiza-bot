@@ -28,8 +28,9 @@ claude = anthropic.Anthropic(api_key=CLAUDE_API_KEY)
 client = TelegramClient(StringSession(SESSION_STRING), API_ID, API_HASH)
 
 last_price_message: str | None = None
-conversations: dict = {}   # {chat_id: [{"role": ..., "content": ...}]}
-clients_db: dict = {}      # {chat_id: {"name": ..., "telegram": ...}}
+conversations: dict = {}        # {chat_id: [{"role": ..., "content": ...}]}
+clients_db: dict = {}           # {chat_id: {"name": ..., "telegram": ...}}
+pending_price_requests: dict = {}  # {customer_id: {"marka": str, "miqdor": str}}
 
 
 SYSTEM_PROMPT = """Sen Nargiza - Petro Plast kompaniyasining savdo menedjeri.
@@ -106,7 +107,8 @@ Mijoz 9 yoki undan ko'p raqam yuborganda - bu TELEFON RAQAM. ISSIQ_LID chiqar.
 
 NARX SO'RALGANDA (mijoz "narxi qancha?" desa):
 - NARXLAR bo'limida narxi bor bo'lsa - narxni ayt va savdo davom ettir
-- NARXLAR bo'limida narxi yo'q bo'lsa - "Narxini bugun aniqlab sizga xabar beraman" de
+- NARXLAR bo'limida narxi yo'q bo'lsa - "Narxini bugun aniqlab sizga xabar beraman" de, keyin yangi qatorda:
+NARX_KUTILMOQDA: [marka] | [mijoz aytgan miqdor, agar aytilmagan bo'lsa "?"]
 - HECH QACHON "boshlig'im bilan gaplashaman" dema — bu faqat chegirma so'raganda
 
 NARX KELISHUVI — FAQAT mijoz BIRINCHI marta "qimmat", "arzonroq qiling", "chegirma bering" desa:
@@ -192,11 +194,31 @@ def parse_response(response: str) -> tuple[str, dict]:
             markers["issiq_lid"] = response
         elif upper.startswith("ISM:"):
             markers["ism"] = line.strip().split(":", 1)[1].strip()
+        elif upper.startswith("NARX_KUTILMOQDA:"):
+            value = line.strip().split(":", 1)[1].strip()
+            parts = [p.strip() for p in value.split("|")]
+            markers["narx_kutilmoqda"] = {
+                "marka": parts[0] if parts else "?",
+                "miqdor": parts[1] if len(parts) > 1 else "?",
+            }
         elif any(upper.startswith(m.upper()) for m in _INTERNAL_MARKERS):
             pass
         else:
             customer_lines.append(line)
     return "\n".join(customer_lines).strip(), markers
+
+
+def extract_single_price(text: str) -> int | None:
+    """BOSS ning qisqa narx javobini aniqlash (narx ro'yxatidan farqli)."""
+    lines = [l for l in text.strip().split("\n") if l.strip()]
+    if len(lines) > 3:
+        return None
+    digits = re.sub(r"[^\d]", "", text)
+    if 4 <= len(digits) <= 7:
+        val = int(digits)
+        if val >= 1000:
+            return val
+    return None
 
 
 def build_lead_card(chat_id: int, phone_text: str, response_text: str) -> str:
@@ -250,10 +272,29 @@ async def on_incoming_message(event):
     if not event.is_private:
         return
 
-    # BOSS narx xabari yuborsa — saqlash
+    # BOSS xabari
     if sender_id == BOSS_CHAT_ID:
-        global last_price_message
-        if text:
+        if not text:
+            return
+        # Pending narx so'roviga javob berganmi?
+        price = extract_single_price(text) if pending_price_requests else None
+        if price is not None:
+            customer_id, req = list(pending_price_requests.items())[-1]
+            c = clients_db.get(customer_id, {})
+            name = c.get("name", "")
+            marka = req["marka"]
+            miqdor = req["miqdor"]
+            prefix = f"{name}, yaxshi xabar! " if name else "Yaxshi xabar! "
+            msg = f"{prefix}{marka} narxi: {price:,} so'm/kg."
+            if miqdor and miqdor != "?":
+                msg += f"\n{miqdor} uchun buyurtmani tasdiqlaysizmi?"
+            else:
+                msg += "\nBuyurtmani tasdiqlaysizmi?"
+            await client.send_message(customer_id, msg)
+            pending_price_requests.pop(customer_id, None)
+            logger.info(f"Narx javob yuborildi {name} ga: {marka} = {price:,}")
+        else:
+            global last_price_message
             last_price_message = text
             logger.info("BOSS yangi narx xabari saqlandi.")
         return
@@ -290,6 +331,15 @@ async def on_incoming_message(event):
         if conversations.get(sender_id):
             conversations[sender_id][-1]["content"] = "Rahmat, tez orada bog'lanamiz."
         return
+
+    if "narx_kutilmoqda" in markers:
+        req = markers["narx_kutilmoqda"]
+        pending_price_requests[sender_id] = req
+        name = clients_db[sender_id].get("name", "")
+        miqdor_part = f"dan {req['miqdor']}" if req["miqdor"] != "?" else ""
+        boss_msg = f"{name} {req['marka']}{miqdor_part} so'rayapti, narx qancha?"
+        await client.send_message(BOSS_CHAT_ID, boss_msg)
+        logger.info(f"Narx so'rovi BOSS ga yuborildi: {boss_msg}")
 
     if customer_text:
         await event.respond(customer_text)
