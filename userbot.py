@@ -477,6 +477,19 @@ def sheets_lidlar_lead(sender_id: int, name: str, telegram: str, phone: str,
         logger.error(f"sheets_lidlar_lead: {e}")
 
 
+def sheets_lidlar_sovuq(name: str, phone: str) -> None:
+    try:
+        row = [
+            datetime.now(TASHKENT).strftime("%Y-%m-%d %H:%M"),
+            name, phone, "", "", "", "", "",
+            "", "Sovuq", "", "Sovuq aloqa", "",
+        ]
+        _lidlar_append(row)
+        logger.info(f"Lidlar sovuq lid: {name} {phone}")
+    except Exception as e:
+        logger.error(f"sheets_lidlar_sovuq: {e}")
+
+
 def match_marka(stored: str, parsed: dict):
     """Marka nomini parsed dict da moslashtirib topadi (case-insensitive, prefix)."""
     if stored in parsed:
@@ -675,6 +688,25 @@ async def on_incoming_message(event):
             return
 
         if not text:
+            return
+
+        # BOSS "+998901234567 Sardor aka" formatida sovuq lid yubordi
+        cold_match = re.match(r'^(\+?\d{9,13})\s+(.+)$', text.strip())
+        if cold_match:
+            phone = cold_match.group(1).strip()
+            name = cold_match.group(2).strip()
+            asyncio.create_task(asyncio.to_thread(sheets_lidlar_sovuq, name, phone))
+            now_ts = time.time()
+            follow_ups.append({
+                "type": "sovuq_lid",
+                "phone": phone,
+                "name": name,
+                "created_ts": now_ts,
+                "send_ts": now_ts + 3600,
+                "sent": False,
+            })
+            asyncio.create_task(asyncio.to_thread(_save_follow_ups))
+            await event.respond(f"Saqlandi! {name} ({phone}) — 1 soat ichida xabar yuboriladi.")
             return
 
         # /yordam — barcha buyruqlar ro'yxati
@@ -1016,6 +1048,31 @@ async def follow_up_checker():
         for fu in follow_ups:
             if fu["sent"] or now_ts < fu["send_ts"]:
                 continue
+
+            # Sovuq lid — telefon raqamiga birinchi xabar
+            if fu["type"] == "sovuq_lid":
+                phone = fu.get("phone", "")
+                name = fu.get("name", "")
+                if not phone:
+                    fu["sent"] = True
+                    changed = True
+                    continue
+                msg = (
+                    f"Salom {name}! Men Nargiza — Petro Plast savdo menejerimiz. "
+                    f"Polietilen yoki polipropilen kerak bo'lsa, eng yaxshi narxni beramiz. "
+                    f"Hozir qaysi marka bilan ishlayapsiz?"
+                )
+                try:
+                    await client.send_message(phone, msg)
+                    fu["sent"] = True
+                    changed = True
+                    logger.info(f"Sovuq lid xabar yuborildi: {name} ({phone})")
+                    await client.send_message(BOSS_CHAT_ID, f"Sovuq lid: {name} ({phone}) ga xabar yuborildi.")
+                except Exception as e:
+                    logger.error(f"Sovuq lid xato ({phone}): {e}")
+                    await client.send_message(BOSS_CHAT_ID, f"Sovuq lid xatosi: {name} ({phone}) — {e}")
+                continue
+
             customer_id = fu["customer_id"]
             c = clients_db.get(customer_id, {})
             # Mijoz scheduled dan keyin javob bergan bo'lsa — o'tkazib yuborish
