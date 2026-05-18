@@ -417,22 +417,42 @@ def detect_language(text: str) -> str:
 
 def _sheets_ensure_lidlar(token: str) -> None:
     hdrs = {"Authorization": f"Bearer {token}"}
-    meta = _http.get(_SHEETS_BASE, headers=hdrs, timeout=10)
-    if meta.ok:
+    try:
+        meta = _http.get(_SHEETS_BASE, headers=hdrs, timeout=10)
+        if not meta.ok:
+            logger.error(f"Sheets meta xatosi: {meta.status_code} — {meta.text[:120]}")
+            return
         titles = [s["properties"]["title"] for s in meta.json().get("sheets", [])]
         if _LIDLAR_SHEET not in titles:
-            _http.post(f"{_SHEETS_BASE}:batchUpdate", headers=hdrs, timeout=10,
-                       json={"requests": [{"addSheet": {"properties": {"title": _LIDLAR_SHEET}}}]})
-    rng = urllib.parse.quote(f"{_LIDLAR_SHEET}!A1:M1", safe="")
-    _http.put(f"{_SHEETS_BASE}/values/{rng}", headers=hdrs, timeout=10,
-              params={"valueInputOption": "RAW"},
-              json={"values": [_LIDLAR_HEADER]})
+            r = _http.post(
+                f"{_SHEETS_BASE}:batchUpdate", headers=hdrs, timeout=10,
+                json={"requests": [{"addSheet": {"properties": {"title": _LIDLAR_SHEET}}}]},
+            )
+            if r.ok:
+                logger.info(f"Lidlar varag'i yaratildi.")
+            else:
+                logger.error(f"Lidlar varag'i yaratishda xato: {r.status_code} — {r.text[:120]}")
+        else:
+            logger.info("Lidlar varag'i mavjud.")
+        rng = urllib.parse.quote(f"{_LIDLAR_SHEET}!A1:M1", safe="")
+        r = _http.put(
+            f"{_SHEETS_BASE}/values/{rng}", headers=hdrs, timeout=10,
+            params={"valueInputOption": "RAW"},
+            json={"values": [_LIDLAR_HEADER]},
+        )
+        if r.ok:
+            logger.info(f"Lidlar header yozildi: {_LIDLAR_HEADER}")
+        else:
+            logger.error(f"Lidlar header xatosi: {r.status_code} — {r.text[:120]}")
+    except Exception as e:
+        logger.error(f"_sheets_ensure_lidlar xatosi: {e}")
 
 
 def _lidlar_append(row: list) -> None:
     global _lidlar_init_done
     token = _get_sheets_token()
     if not token:
+        logger.error("Lidlar append: token olinmadi")
         return
     if not _lidlar_init_done:
         _sheets_ensure_lidlar(token)
@@ -445,7 +465,9 @@ def _lidlar_append(row: list) -> None:
         json={"values": [row]},
         timeout=10,
     )
-    if not r.ok:
+    if r.ok:
+        logger.info(f"Lidlar append OK: {row[:3]}")
+    else:
         logger.error(f"Lidlar append {r.status_code}: {r.text[:150]}")
 
 
