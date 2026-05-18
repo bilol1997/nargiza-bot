@@ -1252,6 +1252,7 @@ async def main():
         token = _get_sheets_token()
         if token:
             _sheets_ensure_mijozlar(token)
+            _sheets_ensure_lidlar(token)
         clients_db = sheets_load_clients()
     else:
         logger.warning("GOOGLE_SHEET_ID yoki GOOGLE_CREDENTIALS yo'q — JSON fayldan yuklanadi.")
