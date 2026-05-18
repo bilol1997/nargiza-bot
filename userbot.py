@@ -1124,6 +1124,106 @@ async def follow_up_checker():
         await asyncio.sleep(3600)
 
 
+def _report_status(c: dict, now_ts: float) -> str | None:
+    """Mijoz holati: daily va weekly hisobot uchun."""
+    last_ts = c.get("last_msg_ts", 0)
+    if not last_ts:
+        return None  # hech qachon yozmagan — hisobotda ko'rsatilmaydi
+    days = (now_ts - last_ts) / 86400
+    if c.get("last_f3_ts"):
+        return "Doimiy"
+    if c.get("had_issiq_lid"):
+        return "Issiq" if days < 14 else "1-sotuv"
+    if days > 7:
+        return "Uxlab qoldi"
+    return "Yangi"
+
+
+def _report_note(c: dict, now_ts: float) -> str:
+    last_ts = c.get("last_msg_ts", 0)
+    if not last_ts:
+        return ""
+    days = int((now_ts - last_ts) / 86400)
+    if days == 0:
+        return "Bugun"
+    if days == 1:
+        return "Kecha"
+    return f"{days} kun avval"
+
+
+async def reporter():
+    """Har kuni 09:00 da kunlik, Dushanba — haftalik hisobot BOSS ga."""
+    while True:
+        now = datetime.now(TASHKENT)
+        target = now.replace(hour=9, minute=0, second=0, microsecond=0)
+        if now >= target:
+            target += timedelta(days=1)
+        await asyncio.sleep((target - now).total_seconds())
+
+        now = datetime.now(TASHKENT)
+        now_ts = now.timestamp()
+
+        # ── Kunlik: aktiv mijozlar kartochkasi ──
+        cards = []
+        for cid, c in list(clients_db.items()):
+            status = _report_status(c, now_ts)
+            if status is None:
+                continue
+            last_ts = c.get("last_msg_ts", 0)
+            if (now_ts - last_ts) > 30 * 86400:
+                continue  # 30 kundan eski — kunlik hisobotda ko'rsatilmaydi
+            ism = c.get("name") or str(cid)
+            marka = c.get("last_marka", "—")
+            izoh = _report_note(c, now_ts)
+            cards.append(f"{ism} | {status} | {marka} | {izoh}")
+
+        if cards:
+            header = f"Kunlik hisobot ({now.strftime('%d.%m.%Y')}):\n"
+            body = "\n".join(f"{i+1}- {line}" for i, line in enumerate(cards))
+            try:
+                await client.send_message(BOSS_CHAT_ID, header + body)
+            except Exception as e:
+                logger.error(f"Kunlik hisobot xato: {e}")
+        else:
+            try:
+                await client.send_message(
+                    BOSS_CHAT_ID,
+                    f"Kunlik hisobot ({now.strftime('%d.%m.%Y')}): Aktiv mijoz yo'q."
+                )
+            except Exception as e:
+                logger.error(f"Kunlik hisobot xato: {e}")
+
+        # ── Haftalik: Dushanba ──
+        if now.weekday() == 0:
+            counts = {"Yangi": 0, "Sovuq": 0, "Issiq": 0, "1-sotuv": 0,
+                      "Doimiy": 0, "Uxlab qoldi": 0}
+            for c in clients_db.values():
+                s = _report_status(c, now_ts)
+                if s and s in counts:
+                    counts[s] += 1
+            # Sovuq lidlar (follow_ups dan — telefon raqamiga yuborilganlar)
+            sovuq_phones = {
+                fu["phone"] for fu in follow_ups
+                if fu.get("type") == "sovuq_lid" and fu.get("sent")
+            }
+            counts["Sovuq"] += len(sovuq_phones)
+            total = sum(counts.values())
+            report = (
+                f"Haftalik hisobot ({now.strftime('%d.%m.%Y')}):\n\n"
+                f"Jami: {total}\n"
+                f"Yangi: {counts['Yangi']}\n"
+                f"Sovuq: {counts['Sovuq']}\n"
+                f"Issiq: {counts['Issiq']}\n"
+                f"1-sotuv: {counts['1-sotuv']}\n"
+                f"Doimiy: {counts['Doimiy']}\n"
+                f"Uxlab qoldi: {counts['Uxlab qoldi']}"
+            )
+            try:
+                await client.send_message(BOSS_CHAT_ID, report)
+            except Exception as e:
+                logger.error(f"Haftalik hisobot xato: {e}")
+
+
 async def announcer():
     while True:
         now = datetime.now(TASHKENT)
@@ -1180,6 +1280,7 @@ async def main():
     await asyncio.gather(
         announcer(),
         follow_up_checker(),
+        reporter(),
         client.run_until_disconnected(),
     )
 
