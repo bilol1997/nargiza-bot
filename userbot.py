@@ -338,18 +338,15 @@ def _get_sheets_token() -> str | None:
 
 def _sheets_ensure_mijozlar(token: str) -> None:
     hdrs = {"Authorization": f"Bearer {token}"}
-    rng  = urllib.parse.quote(f"{_MIJOZLAR_SHEET}!A1:D1", safe="")
-    r    = _http.get(f"{_SHEETS_BASE}/values/{rng}", headers=hdrs, timeout=10)
-    if r.ok and r.json().get("values"):
-        return
-    meta   = _http.get(_SHEETS_BASE, headers=hdrs, timeout=10)
+    meta = _http.get(_SHEETS_BASE, headers=hdrs, timeout=10)
     titles = [s["properties"]["title"] for s in meta.json().get("sheets", [])] if meta.ok else []
     if _MIJOZLAR_SHEET not in titles:
         _http.post(f"{_SHEETS_BASE}:batchUpdate", headers=hdrs, timeout=10,
                    json={"requests": [{"addSheet": {"properties": {"title": _MIJOZLAR_SHEET}}}]})
+    rng = urllib.parse.quote(f"{_MIJOZLAR_SHEET}!A1:G1", safe="")
     _http.put(f"{_SHEETS_BASE}/values/{rng}", headers=hdrs, timeout=10,
               params={"valueInputOption": "RAW"},
-              json={"values": [["chat_id", "name", "telegram", "sana"]]})
+              json={"values": [["chat_id", "name", "telegram", "sana", "til", "status", "lid"]]})
 
 
 def sheets_load_clients() -> dict:
@@ -358,7 +355,7 @@ def sheets_load_clients() -> dict:
         logger.warning("Sheets token yo'q — JSON fayldan yuklanadi.")
         return _load_clients_json()
     try:
-        rng  = urllib.parse.quote(f"{_MIJOZLAR_SHEET}!A:D", safe="")
+        rng  = urllib.parse.quote(f"{_MIJOZLAR_SHEET}!A:G", safe="")
         r    = _http.get(f"{_SHEETS_BASE}/values/{rng}",
                          headers={"Authorization": f"Bearer {token}"}, timeout=15)
         if not r.ok:
@@ -372,8 +369,10 @@ def sheets_load_clients() -> dict:
             try:
                 cid = int(row[0])
                 result[cid] = {
-                    "name":     row[1] if len(row) > 1 else "",
-                    "telegram": row[2] if len(row) > 2 else "",
+                    "name":          row[1] if len(row) > 1 else "",
+                    "telegram":      row[2] if len(row) > 2 else "",
+                    "til":           row[4] if len(row) > 4 else "",
+                    "had_issiq_lid": row[6] == "Ha" if len(row) > 6 else False,
                 }
             except (ValueError, IndexError):
                 continue
@@ -390,12 +389,15 @@ def sheets_save_client(chat_id: int, data: dict) -> None:
         _save_clients_json()
         return
     try:
-        rng = urllib.parse.quote(f"{_MIJOZLAR_SHEET}!A:D", safe="")
+        rng = urllib.parse.quote(f"{_MIJOZLAR_SHEET}!A:G", safe="")
         row = [
             str(chat_id),
             data.get("name", ""),
             data.get("telegram", ""),
             datetime.now(TASHKENT).strftime("%Y-%m-%d %H:%M"),
+            data.get("til", ""),
+            "Issiq lid" if data.get("had_issiq_lid") else "Yangi",
+            "Ha" if data.get("had_issiq_lid") else "Yo'q",
         ]
         _http.post(f"{_SHEETS_BASE}/values/{rng}:append",
                    headers={"Authorization": f"Bearer {token}"},
