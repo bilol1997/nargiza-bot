@@ -42,6 +42,8 @@ openai_client = openai.OpenAI(api_key=OPENAI_API_KEY)
 _SHEET_ID = "1VcRgmY8b6CLk-E-DjVS4SBoMfU9qB9nvoc-S-ia_9yk"
 _SHEETS_BASE = f"https://sheets.googleapis.com/v4/spreadsheets/{_SHEET_ID}"
 _token_cache: dict = {"token": None, "exp": 0}
+_MIJOZLAR_SHEET = "Mijozlar"
+_MIJOZLAR_HEADER = ["chat_id", "name", "telegram", "sana", "til", "status", "lid"]
 
 
 def _b64url(data: bytes) -> str:
@@ -111,6 +113,7 @@ def _sheets_ensure_headers(token: str):
 
 
 _sheets_init_done = False
+_mijozlar_init_done = False
 HOLATLAR = ["Yangi", "Qayta aloqa", "Sotildi", "Rad etdi"]
 
 
@@ -214,6 +217,93 @@ def sheets_add_lead(name, phone, marka, miqdor, tolov, narx,
         logger.info(f"Sheets lead: {name}, {marka}")
     except Exception as e:
         logger.error(f"sheets_add_lead: {e}")
+
+
+def _sheets_ensure_mijozlar(token: str) -> None:
+    hdrs = {"Authorization": f"Bearer {token}"}
+    meta = _http.get(_SHEETS_BASE, headers=hdrs, timeout=10)
+    if meta.ok:
+        titles = [s["properties"]["title"] for s in meta.json().get("sheets", [])]
+        if _MIJOZLAR_SHEET not in titles:
+            _http.post(f"{_SHEETS_BASE}:batchUpdate", headers=hdrs, timeout=10,
+                       json={"requests": [{"addSheet": {"properties": {"title": _MIJOZLAR_SHEET}}}]})
+    rng = urllib.parse.quote(f"{_MIJOZLAR_SHEET}!A1:G1", safe="")
+    _http.put(f"{_SHEETS_BASE}/values/{rng}", headers=hdrs, timeout=10,
+              params={"valueInputOption": "RAW"},
+              json={"values": [_MIJOZLAR_HEADER]})
+
+
+def sheets_save_mijoz(chat_id: int, data: dict) -> None:
+    global _mijozlar_init_done
+    token = _get_sheets_token()
+    if not token:
+        return
+    try:
+        if not _mijozlar_init_done:
+            _sheets_ensure_mijozlar(token)
+            _mijozlar_init_done = True
+        row = [
+            str(chat_id),
+            data.get("name", ""),
+            data.get("telegram", ""),
+            data.get("date", datetime.now(TASHKENT).strftime("%Y-%m-%d %H:%M")),
+            data.get("til", ""),
+            data.get("category", "Yangi"),
+            "True" if data.get("had_issiq_lid") else "False",
+        ]
+        rng = urllib.parse.quote(f"{_MIJOZLAR_SHEET}!A:G", safe="")
+        r = _http.post(
+            f"{_SHEETS_BASE}/values/{rng}:append",
+            headers={"Authorization": f"Bearer {token}"},
+            params={"valueInputOption": "USER_ENTERED", "insertDataOption": "INSERT_ROWS"},
+            json={"values": [row]},
+            timeout=10,
+        )
+        if not r.ok:
+            logger.error(f"Mijozlar append {r.status_code}: {r.text[:150]}")
+        else:
+            logger.info(f"Mijozlar saqlandi: {data.get('name')} {data.get('telegram')}")
+    except Exception as e:
+        logger.error(f"sheets_save_mijoz: {e}")
+
+
+def sheets_load_mijozlar() -> dict:
+    token = _get_sheets_token()
+    if not token:
+        return {}
+    try:
+        rng = urllib.parse.quote(f"{_MIJOZLAR_SHEET}!A:G", safe="")
+        r = _http.get(
+            f"{_SHEETS_BASE}/values/{rng}",
+            headers={"Authorization": f"Bearer {token}"},
+            timeout=10,
+        )
+        if not r.ok:
+            return {}
+        all_rows = r.json().get("values", [])
+        if len(all_rows) < 2:
+            return {}
+        result = {}
+        for row in all_rows[1:]:
+            if not row:
+                continue
+            try:
+                cid = int(row[0])
+            except (ValueError, IndexError):
+                continue
+            result[cid] = {
+                "name": row[1] if len(row) > 1 else "",
+                "telegram": row[2] if len(row) > 2 else "",
+                "date": row[3] if len(row) > 3 else "",
+                "til": row[4] if len(row) > 4 else "",
+                "category": row[5] if len(row) > 5 else "Yangi",
+                "had_issiq_lid": (row[6].lower() == "true") if len(row) > 6 else False,
+            }
+        logger.info(f"Mijozlar yuklandi: {len(result)} ta")
+        return result
+    except Exception as e:
+        logger.error(f"sheets_load_mijozlar: {e}")
+        return {}
 
 
 conversations = {}
@@ -686,6 +776,7 @@ async def handle_response(chat_id, text, response, update, context):
             clients_db[chat_id]['category'] = 'Issiq'
             clients_db[chat_id]['had_issiq_lid'] = True
             clients_db[chat_id]['last_marka'] = lid_marka
+        asyncio.create_task(asyncio.to_thread(sheets_save_mijoz, chat_id, clients_db.get(chat_id, {})))
         schedule_follow_up("issiq_lid", chat_id, lid_marka, 4)
         if chat_id in conversations and conversations[chat_id]:
             conversations[chat_id][-1]['content'] = "Rahmat, tez orada bog'lanamiz."
@@ -965,10 +1056,11 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
             'name': update.effective_user.first_name or '',
             'telegram': tg,
             'category': 'Yangi',
-            'date': datetime.now().strftime("%Y-%m-%d %H:%M"),
+            'date': datetime.now(TASHKENT).strftime("%Y-%m-%d %H:%M"),
             'til': detect_language(text),
         }
         sheets_add_customer(chat_id, clients_db[chat_id]['name'], tg, text)
+        asyncio.create_task(asyncio.to_thread(sheets_save_mijoz, chat_id, clients_db[chat_id]))
     clients_db[chat_id]['last_msg_ts'] = time.time()
 
     response = await get_nargiza_response(chat_id, text)
@@ -1113,6 +1205,11 @@ def main():
     logger.info(f"Follow-ups yuklandi: {len(follow_ups)} ta")
 
     async def post_init(app: Application) -> None:
+        global clients_db
+        loaded = await asyncio.to_thread(sheets_load_mijozlar)
+        if loaded:
+            clients_db.update(loaded)
+            logger.info(f"clients_db Mijozlar dan yuklandi: {len(loaded)} ta")
         asyncio.create_task(follow_up_checker(app.bot))
 
     app = Application.builder().token(TELEGRAM_TOKEN).post_init(post_init).build()
