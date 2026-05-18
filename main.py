@@ -91,22 +91,23 @@ def _get_sheets_token() -> str | None:
         return None
 
 
+_HEADER = ["Sana", "Ism", "Telefon", "Marka", "Miqdor", "To'lov", "Narx", "Holat",
+           "Telegram", "Status", "Til", "Sikl", "Izoh"]
+
+
 def _sheets_ensure_headers(token: str):
     hdrs = {"Authorization": f"Bearer {token}"}
-    rng = urllib.parse.quote("Lidlar!A1:H1", safe="")
-    r = _http.get(f"{_SHEETS_BASE}/values/{rng}", headers=hdrs, timeout=10)
-    if r.ok and r.json().get("values"):
-        return
-    # Create sheet if missing
+    # Varaq yo'q bo'lsa yaratish
     meta = _http.get(_SHEETS_BASE, headers=hdrs, timeout=10)
     if meta.ok:
         titles = [s["properties"]["title"] for s in meta.json().get("sheets", [])]
         if "Lidlar" not in titles:
             _http.post(f"{_SHEETS_BASE}:batchUpdate", headers=hdrs, timeout=10,
                        json={"requests": [{"addSheet": {"properties": {"title": "Lidlar"}}}]})
+    rng = urllib.parse.quote("Lidlar!A1:M1", safe="")
     _http.put(f"{_SHEETS_BASE}/values/{rng}", headers=hdrs, timeout=10,
               params={"valueInputOption": "RAW"},
-              json={"values": [["Sana", "Ism", "Telefon", "Marka", "Miqdor", "To'lov", "Narx", "Holat"]]})
+              json={"values": [_HEADER]})
 
 
 _sheets_init_done = False
@@ -119,7 +120,7 @@ def sheets_get_leads(limit=10):
     if not token:
         return []
     try:
-        rng = urllib.parse.quote("Lidlar!A:H", safe="")
+        rng = urllib.parse.quote("Lidlar!A:M", safe="")
         r = _http.get(f"{_SHEETS_BASE}/values/{rng}",
                       headers={"Authorization": f"Bearer {token}"}, timeout=10)
         if not r.ok:
@@ -157,29 +158,60 @@ def sheets_update_status(sheet_row, new_status):
         return False
 
 
-def sheets_add_lead(name, phone, marka, miqdor, tolov, narx, holat="Yangi lid"):
+def _sheets_append(token: str, row: list) -> None:
     global _sheets_init_done
+    if not _sheets_init_done:
+        _sheets_ensure_headers(token)
+        _sheets_init_done = True
+    rng = urllib.parse.quote("Lidlar!A:M", safe="")
+    r = _http.post(
+        f"{_SHEETS_BASE}/values/{rng}:append",
+        headers={"Authorization": f"Bearer {token}"},
+        params={"valueInputOption": "USER_ENTERED", "insertDataOption": "INSERT_ROWS"},
+        json={"values": [row]},
+        timeout=10,
+    )
+    if not r.ok:
+        logger.error(f"Sheets append {r.status_code}: {r.text[:150]}")
+
+
+def detect_language(text: str) -> str:
+    if not text:
+        return ""
+    cyrillic = sum(1 for c in text if "Ѐ" <= c <= "ӿ")
+    return "Rus" if cyrillic / max(len(text), 1) > 0.3 else "O'zbek"
+
+
+def sheets_add_customer(chat_id: int, name: str, telegram: str, first_text: str = "") -> None:
+    token = _get_sheets_token()
+    if not token:
+        return
     try:
-        token = _get_sheets_token()
-        if not token:
-            return
-        if not _sheets_init_done:
-            _sheets_ensure_headers(token)
-            _sheets_init_done = True
-        rng = urllib.parse.quote("Lidlar!A:H", safe="")
-        row = [datetime.now().strftime("%Y-%m-%d %H:%M"),
-               name, phone, marka, miqdor, tolov, narx, holat]
-        r = _http.post(
-            f"{_SHEETS_BASE}/values/{rng}:append",
-            headers={"Authorization": f"Bearer {token}"},
-            params={"valueInputOption": "USER_ENTERED", "insertDataOption": "INSERT_ROWS"},
-            json={"values": [row]},
-            timeout=10,
-        )
-        if r.ok:
-            logger.info(f"Sheets OK: {name}, {marka}")
-        else:
-            logger.error(f"Sheets {r.status_code}: {r.text[:150]}")
+        til = detect_language(first_text)
+        row = [
+            datetime.now().strftime("%Y-%m-%d %H:%M"),
+            name, "", "", "", "", "", "",          # Telefon..Holat bo'sh
+            telegram, "Yangi", til, "Birinchi aloqa", ""
+        ]
+        _sheets_append(token, row)
+        logger.info(f"Sheets yangi mijoz: {name} {telegram}")
+    except Exception as e:
+        logger.error(f"sheets_add_customer: {e}")
+
+
+def sheets_add_lead(name, phone, marka, miqdor, tolov, narx,
+                    telegram="", til="", holat="Yangi lid"):
+    token = _get_sheets_token()
+    if not token:
+        return
+    try:
+        row = [
+            datetime.now().strftime("%Y-%m-%d %H:%M"),
+            name, phone, marka, miqdor, tolov, narx, holat,
+            telegram, "Issiq lid", til, "Buyurtma", ""
+        ]
+        _sheets_append(token, row)
+        logger.info(f"Sheets lead: {name}, {marka}")
     except Exception as e:
         logger.error(f"sheets_add_lead: {e}")
 
@@ -647,6 +679,8 @@ async def handle_response(chat_id, text, response, update, context):
             miqdor=details.get('Miqdor', '?'),
             tolov=details.get("To'lov", '?'),
             narx=details.get('Narx', '?'),
+            telegram=c.get('telegram', ''),
+            til=c.get('til', ''),
         )
         if chat_id in clients_db:
             clients_db[chat_id]['category'] = 'Issiq'
@@ -924,13 +958,17 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
         return
 
-    if chat_id not in clients_db:
+    is_new = chat_id not in clients_db
+    if is_new:
+        tg = f"@{update.effective_user.username}" if update.effective_user.username else ''
         clients_db[chat_id] = {
             'name': update.effective_user.first_name or '',
-            'telegram': f"@{update.effective_user.username}" if update.effective_user.username else '',
+            'telegram': tg,
             'category': 'Yangi',
-            'date': datetime.now().strftime("%Y-%m-%d %H:%M")
+            'date': datetime.now().strftime("%Y-%m-%d %H:%M"),
+            'til': detect_language(text),
         }
+        sheets_add_customer(chat_id, clients_db[chat_id]['name'], tg, text)
     clients_db[chat_id]['last_msg_ts'] = time.time()
 
     response = await get_nargiza_response(chat_id, text)
