@@ -43,6 +43,9 @@ CLIENTS_DB_FILE  = "clients_db.json"  # JSON fallback
 _SHEETS_ID       = os.environ.get("GOOGLE_SHEET_ID", "")
 _GC_RAW          = os.environ.get("GOOGLE_CREDENTIALS", "")
 _MIJOZLAR_SHEET  = "Mijozlar"
+_LIDLAR_SHEET    = "Lidlar"
+_LIDLAR_HEADER   = ["Sana", "Ism", "Telefon", "Marka", "Miqdor", "To'lov", "Narx", "Holat",
+                    "Telegram", "Status", "Til", "Sikl", "Izoh"]
 _SHEETS_BASE     = f"https://sheets.googleapis.com/v4/spreadsheets/{_SHEETS_ID}"
 _token_cache: dict = {"token": None, "exp": 0}
 
@@ -55,6 +58,7 @@ pending_price_negotiations: dict = {}    # {customer_id: {"marka": str, "taklif"
 
 FOLLOW_UPS_FILE = "follow_ups.json"
 follow_ups: list = []
+_lidlar_init_done: bool = False
 
 
 SYSTEM_PROMPT = """Sen Nargiza - Petro Plast kompaniyasining savdo menedjeri.
@@ -400,6 +404,75 @@ def sheets_save_client(chat_id: int, data: dict) -> None:
     except Exception as e:
         logger.error(f"Sheets saqlashda xato: {e}")
         _save_clients_json()
+
+
+def detect_language(text: str) -> str:
+    if not text:
+        return ""
+    cyrillic = sum(1 for c in text if "Ѐ" <= c <= "ӿ")
+    return "Rus" if cyrillic / max(len(text), 1) > 0.3 else "O'zbek"
+
+
+def _sheets_ensure_lidlar(token: str) -> None:
+    hdrs = {"Authorization": f"Bearer {token}"}
+    meta = _http.get(_SHEETS_BASE, headers=hdrs, timeout=10)
+    if meta.ok:
+        titles = [s["properties"]["title"] for s in meta.json().get("sheets", [])]
+        if _LIDLAR_SHEET not in titles:
+            _http.post(f"{_SHEETS_BASE}:batchUpdate", headers=hdrs, timeout=10,
+                       json={"requests": [{"addSheet": {"properties": {"title": _LIDLAR_SHEET}}}]})
+    rng = urllib.parse.quote(f"{_LIDLAR_SHEET}!A1:M1", safe="")
+    _http.put(f"{_SHEETS_BASE}/values/{rng}", headers=hdrs, timeout=10,
+              params={"valueInputOption": "RAW"},
+              json={"values": [_LIDLAR_HEADER]})
+
+
+def _lidlar_append(row: list) -> None:
+    global _lidlar_init_done
+    token = _get_sheets_token()
+    if not token:
+        return
+    if not _lidlar_init_done:
+        _sheets_ensure_lidlar(token)
+        _lidlar_init_done = True
+    rng = urllib.parse.quote(f"{_LIDLAR_SHEET}!A:M", safe="")
+    r = _http.post(
+        f"{_SHEETS_BASE}/values/{rng}:append",
+        headers={"Authorization": f"Bearer {token}"},
+        params={"valueInputOption": "USER_ENTERED", "insertDataOption": "INSERT_ROWS"},
+        json={"values": [row]},
+        timeout=10,
+    )
+    if not r.ok:
+        logger.error(f"Lidlar append {r.status_code}: {r.text[:150]}")
+
+
+def sheets_lidlar_customer(sender_id: int, data: dict, first_text: str = "") -> None:
+    try:
+        til = detect_language(first_text)
+        row = [
+            datetime.now(TASHKENT).strftime("%Y-%m-%d %H:%M"),
+            data.get("name", ""), "", "", "", "", "", "",
+            data.get("telegram", ""), "Yangi", til, "Birinchi aloqa", "",
+        ]
+        _lidlar_append(row)
+        logger.info(f"Lidlar yangi mijoz: {data.get('name')} {data.get('telegram')}")
+    except Exception as e:
+        logger.error(f"sheets_lidlar_customer: {e}")
+
+
+def sheets_lidlar_lead(sender_id: int, name: str, telegram: str, phone: str,
+                       marka: str, miqdor: str, tolov: str, narx: str, til: str = "") -> None:
+    try:
+        row = [
+            datetime.now(TASHKENT).strftime("%Y-%m-%d %H:%M"),
+            name, phone, marka, miqdor, tolov, narx, "",
+            telegram, "Issiq lid", til, "Buyurtma", "",
+        ]
+        _lidlar_append(row)
+        logger.info(f"Lidlar lead: {name}, {marka}")
+    except Exception as e:
+        logger.error(f"sheets_lidlar_lead: {e}")
 
 
 def match_marka(stored: str, parsed: dict):
@@ -802,8 +875,12 @@ async def on_incoming_message(event):
         clients_db[sender_id] = {
             "name": getattr(sender, "first_name", "") or "",
             "telegram": username,
+            "til": detect_language(text),
         }
         asyncio.create_task(asyncio.to_thread(sheets_save_client, sender_id, clients_db[sender_id]))
+        asyncio.create_task(asyncio.to_thread(
+            sheets_lidlar_customer, sender_id, clients_db[sender_id], text
+        ))
         logger.info(f"Yangi mijoz: {clients_db[sender_id]['name']} {username}")
 
     clients_db[sender_id]["last_msg_ts"] = datetime.now(TASHKENT).timestamp()
@@ -831,6 +908,18 @@ async def on_incoming_message(event):
         clients_db[sender_id]["had_issiq_lid"] = True
         clients_db[sender_id]["last_marka"] = lid_marka
         schedule_follow_up("issiq_lid", sender_id, lid_marka, 4)
+        asyncio.create_task(asyncio.to_thread(
+            sheets_lidlar_lead,
+            sender_id,
+            clients_db[sender_id].get("name", ""),
+            clients_db[sender_id].get("telegram", ""),
+            phone,
+            lid_marka,
+            lid_details.get("Miqdor", ""),
+            lid_details.get("To'lov", ""),
+            lid_details.get("Narx", ""),
+            clients_db[sender_id].get("til", ""),
+        ))
         if conversations.get(sender_id):
             conversations[sender_id][-1]["content"] = "Rahmat, tez orada bog'lanamiz."
         return
