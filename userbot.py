@@ -656,18 +656,23 @@ async def get_ai_response(chat_id: int, user_message: str) -> str:
     conversations[chat_id].append({"role": "user", "content": user_message})
     if len(conversations[chat_id]) > 20:
         conversations[chat_id] = conversations[chat_id][-20:]
-    try:
-        resp = claude.messages.create(
+
+    def _call_claude():
+        return claude.messages.create(
             model="claude-haiku-4-5-20251001",
             max_tokens=300,
             system=SYSTEM_PROMPT.format(prices=get_prices_text()),
             messages=conversations[chat_id],
         )
+
+    try:
+        resp = await asyncio.to_thread(_call_claude)
         msg = resp.content[0].text.strip()
         conversations[chat_id].append({"role": "assistant", "content": msg})
+        logger.info(f"Claude javob ({chat_id}): {msg[:80]!r}")
         return msg
     except Exception as e:
-        logger.error(f"Claude xatosi: {e}")
+        logger.error(f"Claude xatosi ({chat_id}): {e}")
         return "Bir daqiqa kuting."
 
 
@@ -675,9 +680,16 @@ async def get_ai_response(chat_id: int, user_message: str) -> str:
 
 @client.on(events.NewMessage(incoming=True))
 async def on_incoming_message(event):
+    try:
+        await _handle_message(event)
+    except Exception as e:
+        logger.error(f"Handler xatosi: {e}", exc_info=True)
+
+
+async def _handle_message(event):
     sender_id = event.sender_id
     text = (event.message.text or "").strip()
-    logger.info(f"Xabar keldi: {sender_id} - {text[:80]!r}")
+    logger.info(f"Xabar keldi: sender={sender_id} is_private={event.is_private} text={text[:60]!r}")
 
     if not event.is_private:
         return
@@ -1016,7 +1028,11 @@ async def on_incoming_message(event):
         logger.info(f"Narx kelishuv BOSS ga: {boss_msg}")
 
     if customer_text:
+        logger.info(f"Mijozga javob yuborilmoqda ({sender_id}): {customer_text[:80]!r}")
         await event.respond(customer_text)
+        logger.info(f"Javob yuborildi ({sender_id})")
+    else:
+        logger.warning(f"customer_text bo'sh ({sender_id}), javob yuborilmadi. raw={response[:100]!r}")
 
 
 # ── Guruh e'lonlari ────────────────────────────────────────────────────────────
