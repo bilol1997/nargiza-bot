@@ -56,7 +56,8 @@ pending_price_requests: dict = {}        # {customer_id: {"marka": str, "miqdor"
 pending_bank_requests: dict = {}         # {customer_id: {"marka": str, "miqdor": str}}
 pending_price_negotiations: dict = {}    # {customer_id: {"marka": str, "taklif": str, "asl": str}}
 
-FOLLOW_UPS_FILE = "follow_ups.json"
+FOLLOW_UPS_FILE  = "follow_ups.json"
+PRICES_FILE      = "current_prices.json"
 follow_ups: list = []
 _lidlar_init_done: bool = False
 
@@ -275,6 +276,25 @@ def _save_follow_ups() -> None:
             json.dump(follow_ups, f, ensure_ascii=False, indent=2)
     except Exception as e:
         logger.error(f"Follow-ups saqlashda xato: {e}")
+
+
+def _load_prices() -> dict:
+    try:
+        with open(PRICES_FILE, encoding="utf-8") as f:
+            return json.load(f)
+    except FileNotFoundError:
+        return {}
+    except Exception as e:
+        logger.error(f"Narxlar yuklashda xato: {e}")
+        return {}
+
+
+def _save_prices() -> None:
+    try:
+        with open(PRICES_FILE, "w", encoding="utf-8") as f:
+            json.dump(current_prices, f, ensure_ascii=False, indent=2)
+    except Exception as e:
+        logger.error(f"Narxlar saqlashda xato: {e}")
 
 
 def schedule_follow_up(ftype: str, customer_id: int, marka: str, days: int) -> None:
@@ -934,7 +954,8 @@ async def _handle_message(event):
 
         if parsed_prices:
             current_prices.update(parsed_prices)
-            logger.info(f"Narxlar yangilandi: {parsed_prices}")
+            asyncio.create_task(asyncio.to_thread(_save_prices))
+            logger.info(f"Narxlar yangilandi va saqlandi: {parsed_prices}")
         notified_str = ", ".join(notified) if notified else "yo'q"
         logger.info(f"BOSS narx xabari. Yangi: {len(parsed_prices)} ta. Xabardor: {notified_str}")
         return
@@ -1290,9 +1311,11 @@ async def announcer():
 # ── Main ───────────────────────────────────────────────────────────────────────
 
 async def main():
-    global clients_db, follow_ups
+    global clients_db, follow_ups, current_prices
     follow_ups = _load_follow_ups()
     logger.info(f"Follow-ups yuklandi: {len(follow_ups)} ta")
+    current_prices = _load_prices()
+    logger.info(f"Narxlar yuklandi: {len(current_prices)} ta marka")
     if _SHEETS_ID and _GC_RAW:
         token = _get_sheets_token()
         if token:
