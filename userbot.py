@@ -49,7 +49,7 @@ _LIDLAR_HEADER   = ["Sana", "Ism", "Telefon", "Marka", "Miqdor", "To'lov", "Narx
 _SHEETS_BASE     = f"https://sheets.googleapis.com/v4/spreadsheets/{_SHEETS_ID}"
 _token_cache: dict = {"token": None, "exp": 0}
 
-last_price_message: str | None = None
+current_prices: dict = {}  # {brand: price} — kümülatif narx bazasi
 conversations: dict = {}        # {chat_id: [{"role": ..., "content": ...}]}
 clients_db: dict = {}           # {chat_id: {"name": ..., "telegram": ...}}
 pending_price_requests: dict = {}        # {customer_id: {"marka": str, "miqdor": str}}
@@ -136,7 +136,7 @@ Mijoz 9 yoki undan ko'p raqam yuborganda - bu TELEFON RAQAM. ISSIQ_LID chiqar.
 
 NARX SO'RALGANDA (mijoz "narxi qancha?" desa):
 - NARXLAR bo'limida narxi bor bo'lsa - narxni ayt va savdo davom ettir
-- NARXLAR bo'limida narxi yo'q bo'lsa - "Narxini bugun aniqlab sizga xabar beraman" de, keyin yangi qatorda:
+- NARXLAR bo'limida narxi yo'q bo'lsa - "Aka, bir zum, narxni aniqlab beraman" de, keyin yangi qatorda:
 NARX_KUTILMOQDA: [marka] | [mijoz aytgan miqdor, agar aytilmagan bo'lsa "?"]
 - Mijoz aniq marka ko'rsatmay "arzonrog'ini", "shunaqa", "ana shuni" kabi noaniq so'z ishlatsa:
   suhbat tarixidan barcha muhokama qilingan markalarni ol, vergul bilan yoz:
@@ -533,6 +533,14 @@ def parse_price_list(text: str) -> dict:
         line = line.strip()
         if not line:
             continue
+        # "0320 narx 16500" yoki "0320 narxi 16500" formati
+        m = re.match(r'^(.+?)\s+narx[i]?\s+([\d\s,]+)$', line, re.IGNORECASE)
+        if m:
+            brand = m.group(1).strip()
+            price_str = re.sub(r'[^\d]', '', m.group(2))
+            if price_str and brand:
+                prices[brand] = int(price_str)
+                continue
         for sep in [" - ", ": ", "-", ":"]:
             if sep in line:
                 parts = line.split(sep, 1)
@@ -546,12 +554,9 @@ def parse_price_list(text: str) -> dict:
 
 
 def get_prices_text() -> str:
-    if not last_price_message:
+    if not current_prices:
         return "Kiritilmagan"
-    prices = parse_price_list(last_price_message)
-    if not prices:
-        return last_price_message
-    return "\n".join(f"{k}: {v:,} so'm/kg" for k, v in prices.items())
+    return "\n".join(f"{k}: {v:,} so'm/kg" for k, v in current_prices.items())
 
 
 def extract_phone(text: str) -> str:
@@ -927,10 +932,11 @@ async def _handle_message(event):
                 except Exception as e:
                     logger.error(f"Narx yuborishda xato ({customer_id}): {e}")
 
-        global last_price_message
-        last_price_message = text
+        if parsed_prices:
+            current_prices.update(parsed_prices)
+            logger.info(f"Narxlar yangilandi: {parsed_prices}")
         notified_str = ", ".join(notified) if notified else "yo'q"
-        logger.info(f"BOSS narx xabari saqlandi. Xabardor qilingan: {notified_str}")
+        logger.info(f"BOSS narx xabari. Yangi: {len(parsed_prices)} ta. Xabardor: {notified_str}")
         return
 
     # Mijoz xabari
@@ -1049,9 +1055,10 @@ async def get_all_groups() -> list:
 
 
 async def send_to_all_groups():
-    if not last_price_message:
-        logger.info("BOSS hali narx xabari yubormagan.")
+    if not current_prices:
+        logger.info("Hali narx kiritilmagan, e'lon yuborilmadi.")
         return
+    price_text = "\n".join(f"{k}: {v:,} so'm/kg" for k, v in current_prices.items())
     groups = await get_all_groups()
     if not groups:
         logger.warning("Hech qanday guruh topilmadi.")
@@ -1059,7 +1066,7 @@ async def send_to_all_groups():
     ok, fail = 0, 0
     for dialog in groups:
         try:
-            msg = last_price_message + "\n\n📞 +998907080000\n✈️ @nargiza_petroplast"
+            msg = price_text + "\n\n📞 +998907080000\n✈️ @nargiza_petroplast"
             await client.send_message(dialog.id, msg)
             logger.info(f"  [OK] {dialog.name}")
             ok += 1
