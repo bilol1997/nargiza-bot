@@ -174,6 +174,10 @@ SIFAT HUJJATI YOKI SERTIFIKAT SO'RASA:
 MAHSULOT QACHON KELISHI SO'RASA:
 - "Mavjud stokdan — 1-2 ish kuni ichida. Buyurtma bo'lsa — alohida aniqlayman." de
 
+ALOQA RAQAMI SO'RALGANDA:
+- FAQAT: "+998907080000 ga qo'ng'iroq qiling" de
+- Boshqa hech qanday raqam yubormа — hatto telefon ko'rsatilgan bo'lsa ham
+
 KOMPANIYA MA'LUMOTLARI (so'ralganda ayt):
 - Kompaniya: Petro Plast
 - Manzil: Toshkent, Eshonguzar ko'chasi (sklad)
@@ -955,6 +959,8 @@ async def _handle_message(event):
         if parsed_prices:
             current_prices.update(parsed_prices)
             asyncio.create_task(asyncio.to_thread(_save_prices))
+            price_lines = "\n".join(f"{k}: {v:,}" for k, v in parsed_prices.items())
+            await event.respond(f"Narxlar saqlandi:\n{price_lines}")
             logger.info(f"Narxlar yangilandi va saqlandi: {parsed_prices}")
         notified_str = ", ".join(notified) if notified else "yo'q"
         logger.info(f"BOSS narx xabari. Yangi: {len(parsed_prices)} ta. Xabardor: {notified_str}")
