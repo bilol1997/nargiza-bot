@@ -570,10 +570,12 @@ def parse_price_list(text: str) -> dict:
                 parts = line.split(sep, 1)
                 if len(parts) == 2:
                     brand = parts[0].strip()
-                    price_str = "".join(filter(str.isdigit, parts[1]))
-                    if price_str and brand:
-                        prices[brand] = int(price_str)
-                        break
+                    m2 = re.search(r'[\d][\d\s,]*', parts[1].strip())
+                    if m2 and brand:
+                        price_str = re.sub(r'[^\d]', '', m2.group())
+                        if price_str:
+                            prices[brand] = int(price_str)
+                            break
     return prices
 
 
@@ -957,6 +959,7 @@ async def _handle_message(event):
                     logger.error(f"Narx yuborishda xato ({customer_id}): {e}")
 
         if parsed_prices:
+            current_prices.clear()
             current_prices.update(parsed_prices)
             asyncio.create_task(asyncio.to_thread(_save_prices))
             price_lines = "\n".join(f"{k}: {v:,}" for k, v in parsed_prices.items())

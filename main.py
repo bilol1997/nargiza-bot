@@ -626,10 +626,12 @@ def parse_price_list(text):
                 parts = line.split(sep, 1)
                 if len(parts) == 2:
                     brand = parts[0].strip()
-                    price_str = ''.join(filter(str.isdigit, parts[1]))
-                    if price_str and brand:
-                        prices[brand] = int(price_str)
-                        break
+                    m2 = re.search(r'[\d][\d\s,]*', parts[1].strip())
+                    if m2 and brand:
+                        price_str = re.sub(r'[^\d]', '', m2.group())
+                        if price_str:
+                            prices[brand] = int(price_str)
+                            break
     return prices
 
 
@@ -933,6 +935,7 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
             context.user_data['awaiting_narx'] = False
             parsed = parse_price_list(text)
             if parsed:
+                current_prices.clear()
                 current_prices.update(parsed)
                 prices_text = "\n".join([f"{k}: {v:,}" for k, v in parsed.items()])
                 await update.message.reply_text(f"Narxlar saqlandi!\n{prices_text}")
