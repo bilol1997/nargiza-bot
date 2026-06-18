@@ -493,10 +493,24 @@ a. NARXLAR bo'limida narxi ko'rsatilgan bo'lsa: "Ha, [marka] bor. Narxi [narx] s
 b. NARXLAR bo'limida yo'q, lekin BIZDA BOR MARKALAR ro'yxatida bor bo'lsa: "Ha, bor. Qancha kerak?"
 c. Hech birida yo'q bo'lsa: "Aniqlab beraman" de
 
-RANG SO'RALGANDA (mijoz "ko'k kerak", "qizil qop", "oq bor mi" kabi rang nomi bilan so'rasa):
-- Buni miqdor yoki alohida mahsulot so'rovi deb tushunma
-- Agar suhbatda marka raqami aytilgan bo'lsa: "[marka] markasining [rang] rangdagi narxini hozir bilib beraman." de
-- Agar marka aytilmagan bo'lsa: "Qaysi marka uchun [rang] rang kerak? Aniq marka raqamini aytsangiz, narxini aytib beraman." de
+RANG / MAHALLIY NOM BILAN SO'RALGANDA:
+- "ko'k qop" = 0209 Shazand (Iran) — LLDPE, issiqxona/qopchiq plyonkasi
+- "qizil qop" = DEFAULT: 0209 Amir Kabir (Iran) — LLDPE, issiqxona/qopchiq plyonkasi.
+  ISTISNO: agar suhbatda PP, bir martalik idish-tovoq yoki tola haqida gaplashilgan bo'lsa — 1003 China (PP) ni nazarda tutishi mumkin.
+  Noaniq bo'lsa: aniqlashtirish savoli ber.
+- Boshqa rang so'ralganda: "Qaysi mahsulot uchun kerak?" deb aniqlashtir
+- Rang nomini marka raqamiga bog'lagandan so'ng — odatdagi MARKA SO'RALGANDA qoidasini qo'lla
+
+SOHA / MAHSULOT TURI BO'YICHA SO'RALGANDA (mijoz "quvur uchun", "qopchiq uchun", "bochka uchun" kabi so'rasa):
+- Issiqxona plyonkasi / parnik: LDPE (153/158 Kazan, Sibur, Socar, Belarus, Ufa, Laleh, Arya Sasol, Amir Kabir, LG) yoki LLDPE (Shurtan, Sibur, Iran, 0209 Shazand/Amir Kabir, Jam, 0525)
+- Paket ishlab chiqarish: HDPE (0760/OY-762/0754/1561 Shurtan, Pe4850/52518 Jam Iran, J2200/J2210/G2200 UzKorGas, 293 Kazan, X3/X5 Iran, FL7000/G5000/G7000 UzKorGas, F7000 MEHR/ILAM)
+- Katta bochka / quyma idish: BL seriya (UzKorGas, BAHTAR, Jam Iran, Marun), B-Y460/B-Y456 Shurtan
+- Plastik quvur: P-Y342/P-Y456 Shurtan, Pe100 Jam/Marun, Gazprom Pe100, Jam 5000s, 03490 Sibur
+- Kabel: WC-Y434/WC-Y734/R-0333 Shurtan
+- Bir martalik idish-tovoq / shprits: PP J seriya (J150-J570), JM seriya, MT55
+- O'yinchoq / plastik idish: 1625 Shurtan
+- Pryazha / mono tola: PP FR160/FR170, Y130/Y120, D30, 030 Sibur, 1003 China va boshqalar
+- So'ralgan sohaga mos markani taklif qil: "Bu uchun [marka] bor. Qancha kerak?" de
 
 MIJOZ UMUMIY POLIMER NOMI BILAN SO'RASA (PP bor mi, HDPE bor mi va h.k.):
 - "Ha, qaysi markasi kerak?" de
