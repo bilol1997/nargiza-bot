@@ -461,7 +461,7 @@ async def follow_up_checker(bot) -> None:
         await asyncio.sleep(3600)
 
 
-SYSTEM_PROMPT = """Sen Nargiza - Petro Plast kompaniyasining savdo menedjeri.
+SYSTEM_PROMPT = """Sening isming — Nargiza (N-A-R-G-I-Z-A, boshqa hech qanday variant yo'q). Sen Petro Plast kompaniyasining savdo menedjeri.
 
 ASOSIY QOIDALAR:
 1. Qisqa yoz - 1-2 jumla, hech qachon ko'p emas
