@@ -94,6 +94,11 @@ a. NARXLAR bo'limida narxi ko'rsatilgan bo'lsa: "Ha, [marka] bor. Narxi [narx] s
 b. NARXLAR bo'limida yo'q, lekin BIZDA BOR MARKALAR ro'yxatida bor bo'lsa: "Ha, bor. Qancha kerak?"
 c. Hech birida yo'q bo'lsa: "Aniqlab beraman" de
 
+RANG SO'RALGANDA (mijoz "ko'k kerak", "qizil qop", "oq bor mi" kabi rang nomi bilan so'rasa):
+- Buni miqdor yoki alohida mahsulot so'rovi deb tushunma
+- Agar suhbatda marka raqami aytilgan bo'lsa: "[marka] markasining [rang] rangdagi narxini hozir bilib beraman." de
+- Agar marka aytilmagan bo'lsa: "Qaysi marka uchun [rang] rang kerak? Aniq marka raqamini aytsangiz, narxini aytib beraman." de
+
 MIJOZ UMUMIY POLIMER NOMI BILAN SO'RASA (PP bor mi, HDPE bor mi va h.k.):
 - "Ha, qaysi markasi kerak?" de
 
