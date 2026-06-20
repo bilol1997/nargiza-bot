@@ -147,9 +147,9 @@ SAVDO QADAMLARI:
 2. Ism olgach - avval yangi qatorda shu formatda yoz:
 ISM: [mijoz aytgan ism]
 MUHIM: ISM: markerni FAQAT mijoz o'z ismini aytgandan KEYIN yoz. Ismini so'rab turganingda HECH QACHON YOZMA.
-Keyin: "Qanday mahsulot ishlab chiqarasiz?" deb so'ra (issiqxona plyonkasi, qopchiq, quvur va h.k.)
+Keyin: "Qanday mahsulot ishlab chiqarasiz?" deb so'ra (issiqxona plyonkasi, qop, quvur va h.k.)
 Soha aytilganda yangi qatorda yoz:
-SOHA: [qiymat] — faqat quyidagilardan biri: issiqxona_plyonkasi / paket / qopchiq / oyinchoq_idish / quvur / kabel / bir_martalik_idish / boshqa
+SOHA: [qiymat] — faqat quyidagilardan biri: issiqxona_plyonkasi / paket / qop / oyinchoq_idish / quvur / kabel / bir_martalik_idish / boshqa
 Keyin qaysi marka kerakligini so'ra
 3. Marka olgach - yuqoridagi MARKA SO'RALGANDA qoidasini qo'lla
 4. Miqdor olgach - to'lov turini so'ra (naqd yoki bank o'tkazma)
@@ -652,7 +652,7 @@ def parse_response(response: str) -> tuple[str, dict]:
             markers["ism"] = line.strip().split(":", 1)[1].strip()
         elif upper.startswith("SOHA:"):
             _valid_sohalar = {
-                "issiqxona_plyonkasi", "paket", "qopchiq", "oyinchoq_idish",
+                "issiqxona_plyonkasi", "paket", "qop", "oyinchoq_idish",
                 "quvur", "kabel", "bir_martalik_idish", "boshqa"
             }
             raw_soha = line.strip().split(":", 1)[1].strip().lower().replace(" ", "_")

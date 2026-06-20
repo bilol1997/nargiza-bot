@@ -170,7 +170,7 @@ def format_boss_mijozlar(rows: list[dict]) -> str:
     SOHA_NOMI = {
         "issiqxona_plyonkasi": "Issiqxona plyonkasi",
         "paket":               "Paket",
-        "qopchiq":             "Qopchiq",
+        "qop":                 "Qop",
         "oyinchoq_idish":      "O'yinchoq / idish",
         "quvur":               "Quvur",
         "kabel":               "Kabel",
