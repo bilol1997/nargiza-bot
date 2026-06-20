@@ -807,6 +807,42 @@ async def _handle_message(event):
             await event.respond(f"Saqlandi! {name} ({phone}) — 1 soat ichida xabar yuboriladi.")
             return
 
+        # "<id> sotildi [miqdor]" yoki "<id> sotilmadi"
+        if _DB_OK:
+            _sotildi_pat  = re.compile(
+                r'^#?(\d+)\s+sotildi(?:\s+([\d.,]+)\s*(kg|tonna)?)?$', re.IGNORECASE
+            )
+            _sotilmadi_pat = re.compile(r'^#?(\d+)\s+sotilmadi$', re.IGNORECASE)
+            m_s  = _sotildi_pat.match(text.strip())
+            m_sm = _sotilmadi_pat.match(text.strip())
+
+            if m_s:
+                buyurtma_id = int(m_s.group(1))
+                miqdor_raw  = m_s.group(2)
+                birlik      = (m_s.group(3) or "kg").lower()
+                miqdor      = float(miqdor_raw.replace(",", ".")) if miqdor_raw else 0.0
+                if birlik == "tonna":
+                    miqdor *= 1000
+                res = await asyncio.to_thread(_db.tasdiqla_buyurtma, buyurtma_id, miqdor)
+                if res["ok"]:
+                    await event.respond(f"Tasdiqlandi: #{buyurtma_id} {res['marka']} — sotildi.")
+                elif res["sabab"] == "topilmadi":
+                    await event.respond(f"#{buyurtma_id} — bunday buyurtma topilmadi.")
+                else:
+                    await event.respond(f"#{buyurtma_id} allaqachon '{res.get('status', '?')}' holatida.")
+                return
+
+            if m_sm:
+                buyurtma_id = int(m_sm.group(1))
+                res = await asyncio.to_thread(_db.bekor_qil_buyurtma, buyurtma_id)
+                if res["ok"]:
+                    await event.respond(f"Bekor qilindi: #{buyurtma_id} {res['marka']}.")
+                elif res["sabab"] == "topilmadi":
+                    await event.respond(f"#{buyurtma_id} — bunday buyurtma topilmadi.")
+                else:
+                    await event.respond(f"#{buyurtma_id} allaqachon '{res.get('status', '?')}' holatida.")
+                return
+
         # /mijozlar — soha va status bo'yicha to'liq ro'yxat
         if text.strip().lower() == "/mijozlar":
             if not _DB_OK:
