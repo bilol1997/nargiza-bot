@@ -1,5 +1,6 @@
 import logging
 import os
+from typing import Optional
 
 from dotenv import load_dotenv
 from supabase import create_client, Client
@@ -11,7 +12,7 @@ logger = logging.getLogger(__name__)
 _url: str = os.environ.get("SUPABASE_URL", "")
 _key: str = os.environ.get("SUPABASE_KEY", "")
 
-_sb: Client | None = None
+_sb: Optional[Client] = None
 
 
 def _client() -> Client:
@@ -32,7 +33,7 @@ def upsert_mijoz(
     telefon: str = "",
     telegram_username: str = "",
     til: str = "",
-    soha: str | None = None,
+    soha: Optional[str] = None,
     soha_aniqlangan_avtomatik: bool = True,
     status: str = "sovuq",
 ) -> None:
@@ -100,7 +101,7 @@ def add_buyurtma(chat_id: int, marka: str, miqdor_str: str) -> None:
         logger.error(f"add_buyurtma xato ({chat_id}, {marka}): {e}")
 
 
-def _parse_miqdor(raw: str) -> tuple[float | None, str]:
+def _parse_miqdor(raw: str) -> tuple:
     """'500 kg' → (500.0, 'kg'),  '2 tonna' → (2000.0, 'kg'),  '?' → (None, 'kg')"""
     import re
     if not raw or raw.strip() == "?":
