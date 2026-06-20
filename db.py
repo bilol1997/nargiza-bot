@@ -91,6 +91,7 @@ def upsert_mijoz_va_buyurtma(
     til: str,
     marka: str,
     miqdor_str: str,
+    soha: Optional[str] = None,
 ) -> Optional[int]:
     """ISSIQ_LID uchun: avval mijozni upsert qiladi, keyin buyurtma yozadi.
     Ketma-ket (sinxron) ishlaydi — FK xatosi bo'lmasligi uchun.
@@ -102,6 +103,7 @@ def upsert_mijoz_va_buyurtma(
         telegram_username=telegram_username,
         til=til,
         status="issiq",
+        soha=soha,
     )
     return add_buyurtma(chat_id, marka, miqdor_str)
 
@@ -239,22 +241,50 @@ def tasdiqla_buyurtma(buyurtma_id: int, sotilgan_miqdor: float) -> dict:
         return {"ok": False, "sabab": str(e)}
 
 
-def bekor_qil_buyurtma(buyurtma_id: int) -> dict:
-    """'<id> sotilmadi' — buyurtmani bekor_qilindi deb belgilaydi."""
+def bekor_qil_buyurtma(buyurtma_id: int, sabab: str = "") -> dict:
+    """'<id> sotilmadi [sabab]' — buyurtmani bekor_qilindi deb belgilaydi."""
     try:
         res = _client().table("buyurtmalar").select("*").eq("id", buyurtma_id).execute()
         if not res.data:
-            return {"ok": False, "sabab": "topilmadi"}
+            return {"ok": False, "sabab_xato": "topilmadi"}
         row = res.data[0]
         if row["status"] != "kutilmoqda":
-            return {"ok": False, "sabab": "allaqachon_tasdiqlangan", "status": row["status"]}
-        _client().table("buyurtmalar").update({
-            "status": "bekor_qilindi",
-        }).eq("id", buyurtma_id).execute()
+            return {"ok": False, "sabab_xato": "allaqachon_tasdiqlangan", "status": row["status"]}
+        update_data: dict = {"status": "bekor_qilindi"}
+        if sabab:
+            update_data["bekor_sababi"] = sabab
+        _client().table("buyurtmalar").update(update_data).eq("id", buyurtma_id).execute()
         return {"ok": True, "marka": row["marka"], "mijoz_id": row["mijoz_id"]}
     except Exception as e:
         logger.error(f"bekor_qil_buyurtma xato ({buyurtma_id}): {e}")
-        return {"ok": False, "sabab": str(e)}
+        return {"ok": False, "sabab_xato": str(e)}
+
+
+def get_bugungi_sotuv() -> list:
+    """Bugungi sotilgan markalar va jami miqdor."""
+    try:
+        return _client().table("bugungi_sotuv").select("*").execute().data or []
+    except Exception as e:
+        logger.error(f"get_bugungi_sotuv xato: {e}")
+        return []
+
+
+def get_haftalik_sotuv() -> list:
+    """So'nggi 7 kunlik sotuv hisoboti."""
+    try:
+        return _client().table("haftalik_sotuv").select("*").execute().data or []
+    except Exception as e:
+        logger.error(f"get_haftalik_sotuv xato: {e}")
+        return []
+
+
+def get_oylik_sotuv() -> list:
+    """So'nggi 30 kunlik sotuv hisoboti."""
+    try:
+        return _client().table("oylik_sotuv").select("*").execute().data or []
+    except Exception as e:
+        logger.error(f"get_oylik_sotuv xato: {e}")
+        return []
 
 
 def get_kutilmoqda_buyurtmalar() -> list:

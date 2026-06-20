@@ -72,6 +72,7 @@ FOLLOW_UPS_FILE  = "follow_ups.json"
 PRICES_FILE      = "current_prices.json"
 follow_ups: list = []
 _lidlar_init_done: bool = False
+_hisobot_store: dict = {}  # kunlik hisobot bir marta yuborilishi uchun flaglar
 
 
 SYSTEM_PROMPT = """Sening isming — Nargiza (N-A-R-G-I-Z-A, boshqa hech qanday variant yo'q). Sen Petro Plast kompaniyasining savdo menedjeri.
@@ -146,6 +147,9 @@ SAVDO QADAMLARI:
 2. Ism olgach - avval yangi qatorda shu formatda yoz:
 ISM: [mijoz aytgan ism]
 MUHIM: ISM: markerni FAQAT mijoz o'z ismini aytgandan KEYIN yoz. Ismini so'rab turganingda HECH QACHON YOZMA.
+Keyin: "Qanday mahsulot ishlab chiqarasiz?" deb so'ra (issiqxona plyonkasi, qopchiq, quvur va h.k.)
+Soha aytilganda yangi qatorda yoz:
+SOHA: [qiymat] — faqat quyidagilardan biri: issiqxona_plyonkasi / paket / qopchiq / oyinchoq_idish / quvur / kabel / bir_martalik_idish / boshqa
 Keyin qaysi marka kerakligini so'ra
 3. Marka olgach - yuqoridagi MARKA SO'RALGANDA qoidasini qo'lla
 4. Miqdor olgach - to'lov turini so'ra (naqd yoki bank o'tkazma)
@@ -631,7 +635,7 @@ def has_valid_phone(text: str) -> bool:
 TOLOV_KEY = "To’lov"
 
 _INTERNAL_MARKERS = (
-    "ISSIQ_LID", "ISM:", "NARX_KELISHUV:", "NARX_KUTILMOQDA:",
+    "ISSIQ_LID", "ISM:", "SOHA:", "NARX_KELISHUV:", "NARX_KUTILMOQDA:",
     "BANK_NARX_KUTILMOQDA:", "NOMA_LUM_MARKA:", "TEXNIK SAVOL:",
 )
 
@@ -646,6 +650,13 @@ def parse_response(response: str) -> tuple[str, dict]:
             markers["issiq_lid"] = response
         elif upper.startswith("ISM:"):
             markers["ism"] = line.strip().split(":", 1)[1].strip()
+        elif upper.startswith("SOHA:"):
+            _valid_sohalar = {
+                "issiqxona_plyonkasi", "paket", "qopchiq", "oyinchoq_idish",
+                "quvur", "kabel", "bir_martalik_idish", "boshqa"
+            }
+            raw_soha = line.strip().split(":", 1)[1].strip().lower().replace(" ", "_")
+            markers["soha"] = raw_soha if raw_soha in _valid_sohalar else "boshqa"
         elif upper.startswith("NARX_KUTILMOQDA:"):
             value = line.strip().split(":", 1)[1].strip()
             parts = [p.strip() for p in value.split("|")]
@@ -813,7 +824,7 @@ async def _handle_message(event):
             _sotildi_pat  = re.compile(
                 r'^#?(\d+)\s+sotildi(?:\s+([\d.,]+)\s*(kg|tonna)?)?$', re.IGNORECASE
             )
-            _sotilmadi_pat = re.compile(r'^#?(\d+)\s+sotilmadi$', re.IGNORECASE)
+            _sotilmadi_pat = re.compile(r'^#?(\d+)\s+sotilmadi(?:\s+(.+))?$', re.IGNORECASE)
             m_s  = _sotildi_pat.match(text.strip())
             m_sm = _sotilmadi_pat.match(text.strip())
 
@@ -827,7 +838,7 @@ async def _handle_message(event):
                 res = await asyncio.to_thread(_db.tasdiqla_buyurtma, buyurtma_id, miqdor)
                 if res["ok"]:
                     await event.respond(f"Tasdiqlandi: #{buyurtma_id} {res['marka']} — sotildi.")
-                elif res["sabab"] == "topilmadi":
+                elif res["sabab_xato"] == "topilmadi":
                     await event.respond(f"#{buyurtma_id} — bunday buyurtma topilmadi.")
                 else:
                     await event.respond(f"#{buyurtma_id} allaqachon '{res.get('status', '?')}' holatida.")
@@ -835,10 +846,12 @@ async def _handle_message(event):
 
             if m_sm:
                 buyurtma_id = int(m_sm.group(1))
-                res = await asyncio.to_thread(_db.bekor_qil_buyurtma, buyurtma_id)
+                sabab = (m_sm.group(2) or "").strip()
+                res = await asyncio.to_thread(_db.bekor_qil_buyurtma, buyurtma_id, sabab)
                 if res["ok"]:
-                    await event.respond(f"Bekor qilindi: #{buyurtma_id} {res['marka']}.")
-                elif res["sabab"] == "topilmadi":
+                    sabab_qismi = f" ({sabab})" if sabab else ""
+                    await event.respond(f"Bekor qilindi: #{buyurtma_id} {res['marka']}{sabab_qismi}.")
+                elif res["sabab_xato"] == "topilmadi":
                     await event.respond(f"#{buyurtma_id} — bunday buyurtma topilmadi.")
                 else:
                     await event.respond(f"#{buyurtma_id} allaqachon '{res.get('status', '?')}' holatida.")
@@ -1089,6 +1102,14 @@ async def _handle_message(event):
         if _DB_OK:
             asyncio.create_task(asyncio.to_thread(_db.update_mijoz_ism, sender_id, markers["ism"]))
 
+    if "soha" in markers:
+        clients_db[sender_id]["soha"] = markers["soha"]
+        if _DB_OK:
+            asyncio.create_task(asyncio.to_thread(
+                _db.upsert_mijoz, sender_id,
+                soha=markers["soha"], soha_aniqlangan_avtomatik=True
+            ))
+
     if "issiq_lid" in markers:
         phone = extract_phone(text) if has_valid_phone(text) else "?"
         await event.respond("Rahmat, tez orada bog'lanamiz.")
@@ -1118,6 +1139,7 @@ async def _handle_message(event):
                 clients_db[sender_id].get("til", ""),
                 lid_marka,
                 lid_details.get("Miqdor", "?"),
+                clients_db[sender_id].get("soha"),
             )
         card = build_lead_card(sender_id, phone, response, buyurtma_id)
         await client.send_message(BOSS_CHAT_ID, card)
@@ -1306,6 +1328,45 @@ async def follow_up_checker():
         if changed:
             asyncio.create_task(asyncio.to_thread(_save_follow_ups))
 
+        # Kunlik 20:00 hisoboti — kutilmoqdalar + bugungi sotuv
+        if _DB_OK and now.hour == 20:
+            hisobot_key = f"hisobot_{now.date()}"
+            if not _hisobot_store.get(hisobot_key):
+                _hisobot_store[hisobot_key] = True
+
+                # Xabar 1: kutilmoqda buyurtmalar
+                rows = await asyncio.to_thread(_db.get_kutilmoqda_buyurtmalar)
+                if rows:
+                    lines = ["Kutilmoqda buyurtmalar:\n"]
+                    for r in rows:
+                        mijoz  = r.get("mijozlar") or {}
+                        ism    = mijoz.get("ism") or str(r["mijoz_id"])
+                        tel    = mijoz.get("telefon") or "—"
+                        miqdor = f"{r['miqdor']} {r['birlik']}" if r.get("miqdor") else "?"
+                        lines.append(f"#{r['id']} | {ism} ({tel}) | {r['marka']} | {miqdor}")
+                    lines.append("\nFormat: '42 sotildi 500' yoki '42 sotilmadi narx baland'")
+                    try:
+                        await client.send_message(BOSS_CHAT_ID, "\n".join(lines))
+                    except Exception as e:
+                        logger.error(f"20:00 kutilmoqda xabar xato: {e}")
+
+                # Xabar 2: bugungi sotuv hisoboti
+                sotuv = await asyncio.to_thread(_db.get_bugungi_sotuv)
+                if sotuv:
+                    lines = [f"Bugungi sotuv ({now.strftime('%d.%m.%Y')}):\n"]
+                    jami = 0
+                    for r in sotuv:
+                        kg = r.get("jami_kg") or 0
+                        jami += kg
+                        lines.append(
+                            f"{r['marka']}: {int(kg):,} kg ({r['buyurtmalar_soni']} ta)".replace(",", " ")
+                        )
+                    lines.append(f"\nJami: {int(jami):,} kg".replace(",", " "))
+                    try:
+                        await client.send_message(BOSS_CHAT_ID, "\n".join(lines))
+                    except Exception as e:
+                        logger.error(f"20:00 sotuv hisoboti xato: {e}")
+
         await asyncio.sleep(3600)
 
 
@@ -1386,7 +1447,6 @@ async def reporter():
                 s = _report_status(c, now_ts)
                 if s and s in counts:
                     counts[s] += 1
-            # Sovuq lidlar (follow_ups dan — telefon raqamiga yuborilganlar)
             sovuq_phones = {
                 fu["phone"] for fu in follow_ups
                 if fu.get("type") == "sovuq_lid" and fu.get("sent")
@@ -1407,6 +1467,42 @@ async def reporter():
                 await client.send_message(BOSS_CHAT_ID, report)
             except Exception as e:
                 logger.error(f"Haftalik hisobot xato: {e}")
+
+            # Haftalik sotuv hisoboti (Supabase)
+            if _DB_OK:
+                rows = await asyncio.to_thread(_db.get_haftalik_sotuv)
+                if rows:
+                    lines = [f"Haftalik sotuv ({now.strftime('%d.%m.%Y')}, so'nggi 7 kun):\n"]
+                    jami = 0
+                    for r in rows:
+                        kg = r.get("jami_kg") or 0
+                        jami += kg
+                        lines.append(
+                            f"{r['marka']}: {int(kg):,} kg ({r['buyurtmalar_soni']} ta)".replace(",", " ")
+                        )
+                    lines.append(f"\nJami: {int(jami):,} kg".replace(",", " "))
+                    try:
+                        await client.send_message(BOSS_CHAT_ID, "\n".join(lines))
+                    except Exception as e:
+                        logger.error(f"Haftalik sotuv hisoboti xato: {e}")
+
+        # ── Oylik: har oy 1-kuni ──
+        if now.day == 1 and _DB_OK:
+            rows = await asyncio.to_thread(_db.get_oylik_sotuv)
+            if rows:
+                lines = [f"Oylik sotuv hisoboti ({now.strftime('%m.%Y')}):\n"]
+                jami = 0
+                for r in rows:
+                    kg = r.get("jami_kg") or 0
+                    jami += kg
+                    lines.append(
+                        f"{r['marka']}: {int(kg):,} kg ({r['buyurtmalar_soni']} ta)".replace(",", " ")
+                    )
+                lines.append(f"\nJami: {int(jami):,} kg".replace(",", " "))
+                try:
+                    await client.send_message(BOSS_CHAT_ID, "\n".join(lines))
+                except Exception as e:
+                    logger.error(f"Oylik sotuv hisoboti xato: {e}")
 
 
 async def announcer():
