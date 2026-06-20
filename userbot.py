@@ -156,6 +156,7 @@ Marka: [marka]
 Miqdor: [miqdor]
 Narx: [narx]
 To'lov: [to'lov turi]
+Telefon: [mijoz yuborgan raqam]
 
 TELEFON RAQAM HAQIDA:
 O'zbekistonda telefon raqamlar quyidagi formatlarda keladi - BARCHASI TO'G'RI:
@@ -1102,13 +1103,17 @@ async def _handle_message(event):
         clients_db[sender_id]["last_marka"] = lid_marka
         schedule_follow_up("issiq_lid", sender_id, lid_marka, 4)
         # Avval Supabase ga yozib ID olamiz, keyin kartochkaga qo'shamiz
+        # Telefon: avval ISSIQ_LID blokidan, bo'lmasa so'nggi xabardan
+        telefon_db = lid_details.get("Telefon", "").strip()
+        if not telefon_db and phone != "?":
+            telefon_db = phone
         buyurtma_id = None
         if _DB_OK:
             buyurtma_id = await asyncio.to_thread(
                 _db.upsert_mijoz_va_buyurtma,
                 sender_id,
                 clients_db[sender_id].get("name", ""),
-                phone if phone != "?" else "",
+                telefon_db,
                 clients_db[sender_id].get("telegram", ""),
                 clients_db[sender_id].get("til", ""),
                 lid_marka,

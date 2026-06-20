@@ -581,6 +581,7 @@ Marka: [marka]
 Miqdor: [miqdor]
 Narx: [narx]
 To'lov: [to'lov turi]
+Telefon: [mijoz yuborgan raqam]
 
 TELEFON RAQAM HAQIDA:
 O'zbekistonda telefon raqamlar quyidagi formatlarda keladi - BARCHASI TO'G'RI:
