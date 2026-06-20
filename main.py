@@ -17,6 +17,16 @@ try:
     _CRYPTO_OK = True
 except ImportError:
     _CRYPTO_OK = False
+
+try:
+    from dotenv import load_dotenv
+    load_dotenv()
+    import db as _db
+    _DB_OK = True
+except Exception as _db_err:
+    logger = logging.getLogger(__name__)
+    logger.warning(f"Supabase db moduli yuklanmadi: {_db_err}")
+    _DB_OK = False
 from telegram import Update
 from telegram.ext import (
     Application,
@@ -314,6 +324,7 @@ pending_price_requests = {}
 
 FOLLOW_UPS_FILE = "follow_ups_bot.json"
 follow_ups: list = []
+context_store: dict = {}  # kunlik hisobot va boshqa bir martalik flaglar uchun
 
 
 _MALE_NAMES = {
@@ -457,6 +468,33 @@ async def follow_up_checker(bot) -> None:
 
         if changed:
             _save_follow_ups()
+
+        # Kunlik hisobot: har kuni 20:00 da kutilmoqda buyurtmalar
+        if _DB_OK and now.hour == 20:
+            hisobot_key = f"hisobot_{now.date()}"
+            if not context_store.get(hisobot_key):
+                context_store[hisobot_key] = True
+                rows = await asyncio.to_thread(_db.get_kutilmoqda_buyurtmalar)
+                if rows:
+                    lines = ["Kutilmoqda buyurtmalar:\n"]
+                    for r in rows:
+                        mijoz   = r.get("mijozlar") or {}
+                        ism     = mijoz.get("ism") or str(r["mijoz_id"])
+                        tel     = mijoz.get("telefon") or "—"
+                        miqdor  = f"{r['miqdor']} {r['birlik']}" if r.get("miqdor") else "?"
+                        lines.append(
+                            f"#{r['id']} | {ism} ({tel}) | {r['marka']} | {miqdor}"
+                        )
+                    lines.append("\nJavob formati: '42 sotildi 500' yoki '42 sotilmadi'")
+                    try:
+                        await bot.send_message(
+                            chat_id=BOSS_CHAT_ID,
+                            text="\n".join(lines),
+                        )
+                    except Exception as e:
+                        logger.error(f"Kunlik hisobot xato: {e}")
+                else:
+                    logger.info("20:00 hisobot: kutilmoqda buyurtma yo'q.")
 
         await asyncio.sleep(3600)
 
@@ -917,6 +955,54 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     if is_boss(chat_id):
         low = text.lower().strip()
+
+        # "<id> sotildi [miqdor]" yoki "<id> sotilmadi"
+        if _DB_OK:
+            _sotildi_re  = re.compile(
+                r'^(\d+)\s+sotildi(?:\s+([\d.,]+)\s*(kg|tonna)?)?$', re.IGNORECASE
+            )
+            _sotilmadi_re = re.compile(r'^(\d+)\s+sotilmadi$', re.IGNORECASE)
+            m_sotildi   = _sotildi_re.match(low)
+            m_sotilmadi = _sotilmadi_re.match(low)
+
+            if m_sotildi:
+                buyurtma_id = int(m_sotildi.group(1))
+                miqdor_raw  = m_sotildi.group(2)
+                birlik      = (m_sotildi.group(3) or "kg").lower()
+                miqdor      = float(miqdor_raw.replace(",", ".")) if miqdor_raw else 0.0
+                if birlik == "tonna":
+                    miqdor *= 1000
+                res = await asyncio.to_thread(_db.tasdiqla_buyurtma, buyurtma_id, miqdor)
+                if res["ok"]:
+                    await update.message.reply_text(
+                        f"Tasdiqlandi: #{buyurtma_id} {res['marka']} — sotildi."
+                    )
+                elif res["sabab"] == "topilmadi":
+                    await update.message.reply_text(
+                        f"#{buyurtma_id} — bunday buyurtma topilmadi."
+                    )
+                else:
+                    await update.message.reply_text(
+                        f"#{buyurtma_id} allaqachon '{res.get('status', '?')}' holatida."
+                    )
+                return
+
+            if m_sotilmadi:
+                buyurtma_id = int(m_sotilmadi.group(1))
+                res = await asyncio.to_thread(_db.bekor_qil_buyurtma, buyurtma_id)
+                if res["ok"]:
+                    await update.message.reply_text(
+                        f"Bekor qilindi: #{buyurtma_id} {res['marka']}."
+                    )
+                elif res["sabab"] == "topilmadi":
+                    await update.message.reply_text(
+                        f"#{buyurtma_id} — bunday buyurtma topilmadi."
+                    )
+                else:
+                    await update.message.reply_text(
+                        f"#{buyurtma_id} allaqachon '{res.get('status', '?')}' holatida."
+                    )
+                return
 
         if context.user_data.get('awaiting_holat'):
             context.user_data['awaiting_holat'] = False

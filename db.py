@@ -1,5 +1,6 @@
 import logging
 import os
+from datetime import datetime, timezone
 from typing import Optional
 
 from dotenv import load_dotenv
@@ -179,7 +180,7 @@ def format_boss_mijozlar(rows: list[dict]) -> str:
     }
 
     # Soha bo'yicha guruhlash
-    grouped: dict[str | None, list[dict]] = {}
+    grouped: dict = {}
     for row in rows:
         soha = row.get("soha")
         grouped.setdefault(soha, []).append(row)
@@ -207,3 +208,60 @@ def format_boss_mijozlar(rows: list[dict]) -> str:
             )
 
     return "\n".join(lines)
+
+
+# ── Buyurtma tasdiqlash / bekor qilish ────────────────────────────────────────
+
+def tasdiqla_buyurtma(buyurtma_id: int, sotilgan_miqdor: float) -> dict:
+    """'<id> sotildi [miqdor]' — buyurtmani sotildi deb belgilaydi."""
+    try:
+        res = _client().table("buyurtmalar").select("*").eq("id", buyurtma_id).execute()
+        if not res.data:
+            return {"ok": False, "sabab": "topilmadi"}
+        row = res.data[0]
+        if row["status"] != "kutilmoqda":
+            return {"ok": False, "sabab": "allaqachon_tasdiqlangan", "status": row["status"]}
+        now_iso = datetime.now(timezone.utc).isoformat()
+        _client().table("buyurtmalar").update({
+            "status": "sotildi",
+            "sotilgan_miqdor": sotilgan_miqdor if sotilgan_miqdor else row.get("miqdor"),
+            "tasdiqlangan_sana": now_iso,
+        }).eq("id", buyurtma_id).execute()
+        return {"ok": True, "marka": row["marka"], "mijoz_id": row["mijoz_id"]}
+    except Exception as e:
+        logger.error(f"tasdiqla_buyurtma xato ({buyurtma_id}): {e}")
+        return {"ok": False, "sabab": str(e)}
+
+
+def bekor_qil_buyurtma(buyurtma_id: int) -> dict:
+    """'<id> sotilmadi' — buyurtmani bekor_qilindi deb belgilaydi."""
+    try:
+        res = _client().table("buyurtmalar").select("*").eq("id", buyurtma_id).execute()
+        if not res.data:
+            return {"ok": False, "sabab": "topilmadi"}
+        row = res.data[0]
+        if row["status"] != "kutilmoqda":
+            return {"ok": False, "sabab": "allaqachon_tasdiqlangan", "status": row["status"]}
+        _client().table("buyurtmalar").update({
+            "status": "bekor_qilindi",
+        }).eq("id", buyurtma_id).execute()
+        return {"ok": True, "marka": row["marka"], "mijoz_id": row["mijoz_id"]}
+    except Exception as e:
+        logger.error(f"bekor_qil_buyurtma xato ({buyurtma_id}): {e}")
+        return {"ok": False, "sabab": str(e)}
+
+
+def get_kutilmoqda_buyurtmalar() -> list:
+    """Kunlik hisobot uchun: status='kutilmoqda' bo'lgan barcha buyurtmalar."""
+    try:
+        res = (
+            _client().table("buyurtmalar")
+            .select("id, mijoz_id, marka, miqdor, birlik, sana, mijozlar(ism, telefon)")
+            .eq("status", "kutilmoqda")
+            .order("sana")
+            .execute()
+        )
+        return res.data or []
+    except Exception as e:
+        logger.error(f"get_kutilmoqda_buyurtmalar xato: {e}")
+        return []
