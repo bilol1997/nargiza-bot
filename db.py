@@ -82,6 +82,28 @@ def update_mijoz_telefon(chat_id: int, telefon: str) -> None:
 
 # ── Buyurtmalar ───────────────────────────────────────────────────────────────
 
+def upsert_mijoz_va_buyurtma(
+    chat_id: int,
+    ism: str,
+    telefon: str,
+    telegram_username: str,
+    til: str,
+    marka: str,
+    miqdor_str: str,
+) -> None:
+    """ISSIQ_LID uchun: avval mijozni upsert qiladi, keyin buyurtma yozadi.
+    Ketma-ket (sinxron) ishlaydi — FK xatosi bo'lmasligi uchun."""
+    upsert_mijoz(
+        chat_id,
+        ism=ism,
+        telefon=telefon,
+        telegram_username=telegram_username,
+        til=til,
+        status="issiq",
+    )
+    add_buyurtma(chat_id, marka, miqdor_str)
+
+
 def add_buyurtma(chat_id: int, marka: str, miqdor_str: str) -> None:
     """
     Issiq lid kelganda yoki narx tasdiqlanganda buyurtma qo'shadi.

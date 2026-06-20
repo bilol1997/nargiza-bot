@@ -1067,13 +1067,14 @@ async def _handle_message(event):
         schedule_follow_up("issiq_lid", sender_id, lid_marka, 4)
         if _DB_OK:
             asyncio.create_task(asyncio.to_thread(
-                _db.update_mijoz_telefon, sender_id, phone if phone != "?" else ""
-            ))
-            asyncio.create_task(asyncio.to_thread(
-                _db.update_mijoz_status, sender_id, "issiq"
-            ))
-            asyncio.create_task(asyncio.to_thread(
-                _db.add_buyurtma, sender_id, lid_marka, lid_details.get("Miqdor", "?")
+                _db.upsert_mijoz_va_buyurtma,
+                sender_id,
+                clients_db[sender_id].get("name", ""),
+                phone if phone != "?" else "",
+                clients_db[sender_id].get("telegram", ""),
+                clients_db[sender_id].get("til", ""),
+                lid_marka,
+                lid_details.get("Miqdor", "?"),
             ))
         asyncio.create_task(asyncio.to_thread(
             sheets_lidlar_lead,
