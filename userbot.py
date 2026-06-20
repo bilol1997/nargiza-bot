@@ -8,6 +8,9 @@ import time
 import urllib.parse
 from datetime import datetime, timedelta
 
+from dotenv import load_dotenv
+load_dotenv()
+
 import anthropic
 import pytz
 import requests as _http
@@ -21,6 +24,14 @@ try:
     _CRYPTO_OK = True
 except ImportError:
     _CRYPTO_OK = False
+
+try:
+    import db as _db
+    _DB_OK = True
+except Exception as _db_err:
+    logger = logging.getLogger(__name__)
+    logger.warning(f"Supabase db moduli yuklanmadi: {_db_err}")
+    _DB_OK = False
 
 logging.basicConfig(
     format="%(asctime)s - %(levelname)s - %(message)s",
@@ -793,6 +804,18 @@ async def _handle_message(event):
             await event.respond(f"Saqlandi! {name} ({phone}) — 1 soat ichida xabar yuboriladi.")
             return
 
+        # /mijozlar — soha va status bo'yicha to'liq ro'yxat
+        if text.strip().lower() == "/mijozlar":
+            if not _DB_OK:
+                await event.respond("Supabase ulanmagan, /mijozlar ishlamaydi.")
+                return
+            rows = await asyncio.to_thread(_db.get_boss_mijozlar)
+            msg = _db.format_boss_mijozlar(rows)
+            # Telegram xabar 4096 belgidan uzun bo'lmasligi uchun bo'laklarga ajratamiz
+            for i in range(0, len(msg), 4000):
+                await client.send_message(BOSS_CHAT_ID, msg[i:i + 4000])
+            return
+
         # /yordam — barcha buyruqlar ro'yxati
         if text.strip().lower() == "/yordam":
             pending_names = ", ".join(
@@ -802,7 +825,8 @@ async def _handle_message(event):
             await event.respond(
                 "Buyruqlar:\n"
                 "/yordam — shu ro'yxat\n"
-                "/yoz [ism] [xabar] — mijozga xabar yuborish\n\n"
+                "/yoz [ism] [xabar] — mijozga xabar yuborish\n"
+                "/mijozlar — soha va status bo'yicha to'liq ro'yxat\n\n"
                 f"Narx kutayotganlar: {pending_names}\n"
                 f"Jami mijozlar: {len(clients_db)}"
             )
@@ -1004,6 +1028,14 @@ async def _handle_message(event):
         asyncio.create_task(asyncio.to_thread(
             sheets_lidlar_customer, sender_id, clients_db[sender_id], text
         ))
+        if _DB_OK:
+            asyncio.create_task(asyncio.to_thread(
+                _db.upsert_mijoz,
+                sender_id,
+                ism=clients_db[sender_id].get("name", ""),
+                telegram_username=username,
+                til=clients_db[sender_id].get("til", ""),
+            ))
         logger.info(f"Yangi mijoz: {clients_db[sender_id]['name']} {username}")
 
     clients_db[sender_id]["last_msg_ts"] = datetime.now(TASHKENT).timestamp()
@@ -1014,6 +1046,8 @@ async def _handle_message(event):
     if "ism" in markers:
         clients_db[sender_id]["name"] = markers["ism"]
         asyncio.create_task(asyncio.to_thread(sheets_save_client, sender_id, clients_db[sender_id]))
+        if _DB_OK:
+            asyncio.create_task(asyncio.to_thread(_db.update_mijoz_ism, sender_id, markers["ism"]))
 
     if "issiq_lid" in markers:
         phone = extract_phone(text) if has_valid_phone(text) else "?"
@@ -1031,6 +1065,16 @@ async def _handle_message(event):
         clients_db[sender_id]["had_issiq_lid"] = True
         clients_db[sender_id]["last_marka"] = lid_marka
         schedule_follow_up("issiq_lid", sender_id, lid_marka, 4)
+        if _DB_OK:
+            asyncio.create_task(asyncio.to_thread(
+                _db.update_mijoz_telefon, sender_id, phone if phone != "?" else ""
+            ))
+            asyncio.create_task(asyncio.to_thread(
+                _db.update_mijoz_status, sender_id, "issiq"
+            ))
+            asyncio.create_task(asyncio.to_thread(
+                _db.add_buyurtma, sender_id, lid_marka, lid_details.get("Miqdor", "?")
+            ))
         asyncio.create_task(asyncio.to_thread(
             sheets_lidlar_lead,
             sender_id,
