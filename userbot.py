@@ -466,7 +466,7 @@ def detect_language(text: str) -> str:
     if not text:
         return ""
     cyrillic = sum(1 for c in text if "Ѐ" <= c <= "ӿ")
-    return "Rus" if cyrillic / max(len(text), 1) > 0.3 else "O'zbek"
+    return "ru" if cyrillic / max(len(text), 1) > 0.3 else "uz"
 
 
 def _sheets_ensure_lidlar(token: str) -> None:
