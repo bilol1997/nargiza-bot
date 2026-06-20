@@ -91,9 +91,10 @@ def upsert_mijoz_va_buyurtma(
     til: str,
     marka: str,
     miqdor_str: str,
-) -> None:
+) -> Optional[int]:
     """ISSIQ_LID uchun: avval mijozni upsert qiladi, keyin buyurtma yozadi.
-    Ketma-ket (sinxron) ishlaydi — FK xatosi bo'lmasligi uchun."""
+    Ketma-ket (sinxron) ishlaydi — FK xatosi bo'lmasligi uchun.
+    Qaytaradi: yangi buyurtmaning id si (yoki None, xato bo'lsa)."""
     upsert_mijoz(
         chat_id,
         ism=ism,
@@ -102,13 +103,14 @@ def upsert_mijoz_va_buyurtma(
         til=til,
         status="issiq",
     )
-    add_buyurtma(chat_id, marka, miqdor_str)
+    return add_buyurtma(chat_id, marka, miqdor_str)
 
 
-def add_buyurtma(chat_id: int, marka: str, miqdor_str: str) -> None:
+def add_buyurtma(chat_id: int, marka: str, miqdor_str: str) -> Optional[int]:
     """
     Issiq lid kelganda yoki narx tasdiqlanganda buyurtma qo'shadi.
     miqdor_str: "500 kg", "2 tonna", "2000", "?" — har qanday formatda bo'lishi mumkin.
+    Qaytaradi: yangi qatorning id si (yoki None).
     """
     miqdor, birlik = _parse_miqdor(miqdor_str)
     data: dict = {
@@ -119,9 +121,13 @@ def add_buyurtma(chat_id: int, marka: str, miqdor_str: str) -> None:
     if miqdor is not None:
         data["miqdor"] = miqdor
     try:
-        _client().table("buyurtmalar").insert(data).execute()
+        res = _client().table("buyurtmalar").insert(data).execute()
+        if res.data:
+            return res.data[0].get("id")
+        return None
     except Exception as e:
         logger.error(f"add_buyurtma xato ({chat_id}, {marka}): {e}")
+        return None
 
 
 def _parse_miqdor(raw: str) -> tuple:

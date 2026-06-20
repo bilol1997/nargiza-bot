@@ -8,6 +8,7 @@ import time
 import urllib.parse
 from datetime import datetime, timedelta
 
+from typing import Optional
 from dotenv import load_dotenv
 load_dotenv()
 
@@ -692,15 +693,17 @@ def extract_single_price(text: str) -> int | None:
     return None
 
 
-def build_lead_card(chat_id: int, phone: str, response_text: str) -> str:
+def build_lead_card(chat_id: int, phone: str, response_text: str, buyurtma_id: Optional[int] = None) -> str:
     c = clients_db.get(chat_id, {})
     details = {}
     for line in response_text.strip().split("\n")[1:]:
         if ":" in line:
             k, v = line.split(":", 1)
             details[k.strip()] = v.strip()
+    id_qator = f"Buyurtma ID: #{buyurtma_id}\n" if buyurtma_id else ""
     return (
         f"ISSIQ LID! (userbot)\n"
+        f"{id_qator}"
         f"Ism: {c.get('name', '?')}\n"
         f"Telegram: {c.get('telegram', 'nomalum')}\n"
         f"Telefon: {phone}\n"
@@ -1052,10 +1055,7 @@ async def _handle_message(event):
     if "issiq_lid" in markers:
         phone = extract_phone(text) if has_valid_phone(text) else "?"
         await event.respond("Rahmat, tez orada bog'lanamiz.")
-        card = build_lead_card(sender_id, phone, response)
-        await client.send_message(BOSS_CHAT_ID, card)
-        logger.info(f"Issiq lid BOSS ga yuborildi: {clients_db[sender_id].get('name', sender_id)} tel={phone}")
-        # Marka ni ajratib olish
+        # Marka va detallarni ajratib olish
         lid_details = {}
         for line in response.strip().split("\n")[1:]:
             if ":" in line:
@@ -1065,8 +1065,10 @@ async def _handle_message(event):
         clients_db[sender_id]["had_issiq_lid"] = True
         clients_db[sender_id]["last_marka"] = lid_marka
         schedule_follow_up("issiq_lid", sender_id, lid_marka, 4)
+        # Avval Supabase ga yozib ID olamiz, keyin kartochkaga qo'shamiz
+        buyurtma_id = None
         if _DB_OK:
-            asyncio.create_task(asyncio.to_thread(
+            buyurtma_id = await asyncio.to_thread(
                 _db.upsert_mijoz_va_buyurtma,
                 sender_id,
                 clients_db[sender_id].get("name", ""),
@@ -1075,7 +1077,10 @@ async def _handle_message(event):
                 clients_db[sender_id].get("til", ""),
                 lid_marka,
                 lid_details.get("Miqdor", "?"),
-            ))
+            )
+        card = build_lead_card(sender_id, phone, response, buyurtma_id)
+        await client.send_message(BOSS_CHAT_ID, card)
+        logger.info(f"Issiq lid BOSS ga yuborildi: {clients_db[sender_id].get('name', sender_id)} tel={phone} buyurtma_id={buyurtma_id}")
         asyncio.create_task(asyncio.to_thread(
             sheets_lidlar_lead,
             sender_id,
