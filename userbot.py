@@ -193,23 +193,27 @@ E'TIROZLAR — QOIDALAR:
 - HECH QACHON narxni o'zing tushirma, chegirma va'da qilma, shartlarni o'zgartirma
 - Chegirma so'rasa: "Buni rahbarim bilan tekshirib, sizga qaytaman" de — boshqa hech narsa
 - E'tiroz aniqlanganida yangi qatorda yoz:
-ETIROZ: [tur] | [mijozning aniq so'zlari]
+ETIROZ: [tur] | [mijozning aniq so'zlari] | [raqib nomi yoki "-"] | [raqib narxi yoki "-"]
   turlar: narx_baland / boshqa_joyda_arzon / hozir_kerak_emas / boshqa_servis_yaxshi / boshqa
 
 "narx_baland" (qimmat, narx baland, boshqa yerda arzon):
 - "Tushunaman. Biz 24/7 ishlaymiz, hujjatlar to'liq, yetkazish tezkor — sifat farqi bor." de
 - Narxni muhokama qilma
 
-"boshqa_joyda_arzon" (boshqa joyda ko'proq arzon ko'rdim):
-- "Qaysi marka, qaysi sort? Bir xil marka bo'lsa solishtiraylik." de
-- Keyin: "Bizda hujjat, tezkorlik va ishonch kafolatlangan." de
+"boshqa_joyda_arzon" (boshqa joyda arzonroq ko'rdim):
+- AVVAL aniq so'ra: "Qaysi firmadan, qancha narxda?" — nom va raqam olguncha dalil berma
+- Nom va narx olingach: "Ular [narx]da berishyapti — hujjat to'liqmi, kafolat bormi? Bizda hujjatlar rasmiylashtirilgan, yetkazish tezkor, ko'pchilik qaytib keladi."
+- Mijoz qat'iy ketsa: "Mayli, kerak bo'lsa yozing — doim shu yerdamiz."
+- ETIROZ: boshqa_joyda_arzon | [mijozning so'zlari] | [raqib nomi yoki "-"] | [raqib narxi yoki "-"]
 
 "hozir_kerak_emas" (keyin, hozir yo'q, keyinroq):
 - Bosim qilma: "Mayli, kerak bo'lganda yozing — doim shu yerda bo'lamiz." de
 
 "boshqa_servis_yaxshi" (boshqa yerdan olaman, ular yaxshiroq):
-- Raqobatchini yomonlama
-- "Har kim o'z yo'lida. Bizda [marka] bor, kerak bo'lsa qaytib keling." de
+- AVVAL aniq so'ra: "Qaysi firma? Ular nima bilan yaxshiroq — narxmi, yetkazishmi, munosabatmi?"
+- Aniq javob olingach: "Tushunaman. Bizda [aniq ustunlik — sertifikat/tezkorlik/ishonch] bor — shu borada bir solishtirib ko'ramizmi?"
+- Mijoz qat'iy ketsa: "Har kim o'z yo'lida. Kerak bo'lsa qaytib keling."
+- ETIROZ: boshqa_servis_yaxshi | [mijozning so'zlari] | [raqib nomi yoki "-"] | -
 
 BANK O'TKAZMA SO'RASA (mijoz "bank o'tkazma", "plastik", "karta", "o'tkazma" so'zlarini ishlatsa):
 - "Aniqlab beraman" de, keyin yangi qatorda:
@@ -676,15 +680,27 @@ def parse_response(response: str) -> tuple[str, dict]:
             markers["soha"] = raw_soha if raw_soha in _valid_sohalar else "boshqa"
         elif upper.startswith("ETIROZ:"):
             value = line.strip().split(":", 1)[1].strip()
-            parts = [p.strip() for p in value.split("|", 1)]
+            parts = [p.strip() for p in value.split("|")]
             _valid_etirozlar = {
                 "narx_baland", "boshqa_joyda_arzon",
                 "hozir_kerak_emas", "boshqa_servis_yaxshi", "boshqa"
             }
             tur = parts[0].lower() if parts else "boshqa"
+            raqib_nomi_raw  = parts[2] if len(parts) > 2 else "-"
+            raqib_narxi_raw = parts[3] if len(parts) > 3 else "-"
+            try:
+                raqib_narxi_val: Optional[float] = (
+                    float(raqib_narxi_raw.replace(" ", "").replace(",", "."))
+                    if raqib_narxi_raw not in ("-", "", "?")
+                    else None
+                )
+            except ValueError:
+                raqib_narxi_val = None
             markers["etiroz"] = {
-                "tur": tur if tur in _valid_etirozlar else "boshqa",
-                "matn": parts[1] if len(parts) > 1 else "",
+                "tur":         tur if tur in _valid_etirozlar else "boshqa",
+                "matn":        parts[1] if len(parts) > 1 else "",
+                "raqib_nomi":  raqib_nomi_raw  if raqib_nomi_raw  not in ("-", "", "?") else None,
+                "raqib_narxi": raqib_narxi_val,
             }
         elif upper.startswith("NARX_KUTILMOQDA:"):
             value = line.strip().split(":", 1)[1].strip()
@@ -1189,6 +1205,8 @@ async def _handle_message(event):
             markers["etiroz"]["tur"],
             markers["etiroz"]["matn"],
             clients_db.get(sender_id, {}).get("last_buyurtma_id"),
+            markers["etiroz"].get("raqib_nomi"),
+            markers["etiroz"].get("raqib_narxi"),
         ))
 
     if "issiq_lid" in markers:

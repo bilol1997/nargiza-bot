@@ -321,6 +321,8 @@ def add_etiroz(
     etiroz_turi: str,
     etiroz_matni: str = "",
     buyurtma_id: Optional[int] = None,
+    raqib_nomi: Optional[str] = None,
+    raqib_narxi: Optional[float] = None,
 ) -> None:
     valid = {
         "narx_baland", "boshqa_joyda_arzon",
@@ -334,6 +336,10 @@ def add_etiroz(
         data["etiroz_matni"] = etiroz_matni
     if buyurtma_id:
         data["buyurtma_id"] = buyurtma_id
+    if raqib_nomi:
+        data["raqib_nomi"] = raqib_nomi
+    if raqib_narxi is not None:
+        data["raqib_narxi"] = raqib_narxi
     try:
         _client().table("etirozlar").insert(data).execute()
     except Exception as e:
