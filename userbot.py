@@ -1072,24 +1072,67 @@ async def _handle_message(event):
     if sender_id not in clients_db:
         sender = await event.get_sender()
         username = f"@{sender.username}" if getattr(sender, "username", None) else ""
-        clients_db[sender_id] = {
-            "name": getattr(sender, "first_name", "") or "",
-            "telegram": username,
-            "til": detect_language(text),
-        }
-        asyncio.create_task(asyncio.to_thread(sheets_save_client, sender_id, clients_db[sender_id]))
-        asyncio.create_task(asyncio.to_thread(
-            sheets_lidlar_customer, sender_id, clients_db[sender_id], text
-        ))
+
+        # Supabase dan qaytgan mijozni tekshirish
+        qaytgan = None
+        oxirgi_buyurtma = None
         if _DB_OK:
+            qaytgan = await asyncio.to_thread(_db.get_mijoz, sender_id)
+            if qaytgan:
+                oxirgi_buyurtma = await asyncio.to_thread(_db.get_oxirgi_buyurtma, sender_id)
+
+        if qaytgan:
+            # Qaytgan mijoz — keshga yuklaymiz, ism/soha so'rash o'tkazib yuboriladi
+            clients_db[sender_id] = {
+                "name": qaytgan.get("ism") or getattr(sender, "first_name", "") or "",
+                "telegram": username,
+                "til": qaytgan.get("til") or detect_language(text),
+                "soha": qaytgan.get("soha") or "",
+                "had_issiq_lid": bool(oxirgi_buyurtma),
+                "last_marka": oxirgi_buyurtma["marka"] if oxirgi_buyurtma else "",
+            }
+            # Salomlashuv xabarini AI ga kontekst sifatida beramiz
+            ism = clients_db[sender_id]["name"]
+            ism_titled = name_title(ism) if ism else ""
+            if oxirgi_buyurtma:
+                marka = oxirgi_buyurtma["marka"]
+                salom_ctx = (
+                    f"[TIZIM: Bu qaytgan mijoz. Ism: {ism_titled or ism}. "
+                    f"Oxirgi buyurtma: {marka}. "
+                    f"Birinchi xabarda: 'Salom, {ism_titled or ism}! "
+                    f"Oxirgi marta {marka} olgan edingiz, yana shundan kerakmi yoki boshqa narsa?' de. "
+                    f"Ism va soha so'rama — allaqachon ma'lum.]"
+                )
+            else:
+                salom_ctx = (
+                    f"[TIZIM: Bu qaytgan mijoz. Ism: {ism_titled or ism}. "
+                    f"Birinchi xabarda: 'Salom, {ism_titled or ism}! Nima kerak?' de. "
+                    f"Ism va soha so'rama — allaqachon ma'lum.]"
+                )
+            if sender_id not in conversations:
+                conversations[sender_id] = []
+            conversations[sender_id].insert(0, {"role": "user", "content": salom_ctx})
+            logger.info(f"Qaytgan mijoz: {clients_db[sender_id]['name']} {username}")
+        else:
+            # Yangi mijoz — standart oqim
+            clients_db[sender_id] = {
+                "name": getattr(sender, "first_name", "") or "",
+                "telegram": username,
+                "til": detect_language(text),
+            }
+            asyncio.create_task(asyncio.to_thread(sheets_save_client, sender_id, clients_db[sender_id]))
             asyncio.create_task(asyncio.to_thread(
-                _db.upsert_mijoz,
-                sender_id,
-                ism=clients_db[sender_id].get("name", ""),
-                telegram_username=username,
-                til=clients_db[sender_id].get("til", ""),
+                sheets_lidlar_customer, sender_id, clients_db[sender_id], text
             ))
-        logger.info(f"Yangi mijoz: {clients_db[sender_id]['name']} {username}")
+            if _DB_OK:
+                asyncio.create_task(asyncio.to_thread(
+                    _db.upsert_mijoz,
+                    sender_id,
+                    ism=clients_db[sender_id].get("name", ""),
+                    telegram_username=username,
+                    til=clients_db[sender_id].get("til", ""),
+                ))
+            logger.info(f"Yangi mijoz: {clients_db[sender_id]['name']} {username}")
 
     clients_db[sender_id]["last_msg_ts"] = datetime.now(TASHKENT).timestamp()
 

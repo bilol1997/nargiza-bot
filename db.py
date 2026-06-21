@@ -287,6 +287,35 @@ def get_oylik_sotuv() -> list:
         return []
 
 
+def get_mijoz(chat_id: int) -> Optional[dict]:
+    """Supabase dan mijoz ma'lumotini oladi. Topilmasa None qaytaradi."""
+    try:
+        res = _client().table("mijozlar").select("*").eq("chat_id", chat_id).execute()
+        return res.data[0] if res.data else None
+    except Exception as e:
+        logger.error(f"get_mijoz xato ({chat_id}): {e}")
+        return None
+
+
+def get_oxirgi_buyurtma(chat_id: int) -> Optional[dict]:
+    """Mijozning eng so'nggi SOTILGAN buyurtmasini qaytaradi.
+    kutilmoqda/bekor_qilindi holatlari hisobga olinmaydi."""
+    try:
+        res = (
+            _client().table("buyurtmalar")
+            .select("marka, miqdor, birlik, tasdiqlangan_sana")
+            .eq("mijoz_id", chat_id)
+            .eq("status", "sotildi")
+            .order("tasdiqlangan_sana", desc=True)
+            .limit(1)
+            .execute()
+        )
+        return res.data[0] if res.data else None
+    except Exception as e:
+        logger.error(f"get_oxirgi_buyurtma xato ({chat_id}): {e}")
+        return None
+
+
 def get_kutilmoqda_buyurtmalar() -> list:
     """Kunlik hisobot uchun: status='kutilmoqda' bo'lgan barcha buyurtmalar."""
     try:
