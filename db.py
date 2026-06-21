@@ -316,6 +316,39 @@ def get_oxirgi_buyurtma(chat_id: int) -> Optional[dict]:
         return None
 
 
+def add_etiroz(
+    mijoz_id: int,
+    etiroz_turi: str,
+    etiroz_matni: str = "",
+    buyurtma_id: Optional[int] = None,
+) -> None:
+    valid = {
+        "narx_baland", "boshqa_joyda_arzon",
+        "hozir_kerak_emas", "boshqa_servis_yaxshi", "boshqa"
+    }
+    tur = etiroz_turi.lower().strip()
+    if tur not in valid:
+        tur = "boshqa"
+    data: dict = {"mijoz_id": mijoz_id, "etiroz_turi": tur}
+    if etiroz_matni:
+        data["etiroz_matni"] = etiroz_matni
+    if buyurtma_id:
+        data["buyurtma_id"] = buyurtma_id
+    try:
+        _client().table("etirozlar").insert(data).execute()
+    except Exception as e:
+        logger.error(f"add_etiroz xato ({mijoz_id}): {e}")
+
+
+def get_etirozlar_taqsimoti() -> list:
+    """etirozlar_taqsimoti VIEW dan bugungi/haftalik/oylik taqsimot."""
+    try:
+        return _client().table("etirozlar_taqsimoti").select("*").execute().data or []
+    except Exception as e:
+        logger.error(f"get_etirozlar_taqsimoti xato: {e}")
+        return []
+
+
 def get_kutilmoqda_buyurtmalar() -> list:
     """Kunlik hisobot uchun: status='kutilmoqda' bo'lgan barcha buyurtmalar."""
     try:

@@ -189,10 +189,27 @@ Avval suhbat tarixini ko'r:
   2. Keyin yangi qatorda:
 NARX_KELISHUV: [marka] | [mijoz taklif qilgan narx, yo'q bo'lsa "?"] | [joriy narx, yo'q bo'lsa "?"]
 
-E'TIROZLAR:
-"Qimmat" desa: "Qayerda ko'rdingiz?" de
-"O'ylab ko'raman" desa: "Narxdan tashqari boshqa savol bormi?"
-"Boshqa joy arzon" desa: "Qancha farq bor?" de
+E'TIROZLAR — QOIDALAR:
+- HECH QACHON narxni o'zing tushirma, chegirma va'da qilma, shartlarni o'zgartirma
+- Chegirma so'rasa: "Buni rahbarim bilan tekshirib, sizga qaytaman" de — boshqa hech narsa
+- E'tiroz aniqlanganida yangi qatorda yoz:
+ETIROZ: [tur] | [mijozning aniq so'zlari]
+  turlar: narx_baland / boshqa_joyda_arzon / hozir_kerak_emas / boshqa_servis_yaxshi / boshqa
+
+"narx_baland" (qimmat, narx baland, boshqa yerda arzon):
+- "Tushunaman. Biz 24/7 ishlaymiz, hujjatlar to'liq, yetkazish tezkor — sifat farqi bor." de
+- Narxni muhokama qilma
+
+"boshqa_joyda_arzon" (boshqa joyda ko'proq arzon ko'rdim):
+- "Qaysi marka, qaysi sort? Bir xil marka bo'lsa solishtiraylik." de
+- Keyin: "Bizda hujjat, tezkorlik va ishonch kafolatlangan." de
+
+"hozir_kerak_emas" (keyin, hozir yo'q, keyinroq):
+- Bosim qilma: "Mayli, kerak bo'lganda yozing — doim shu yerda bo'lamiz." de
+
+"boshqa_servis_yaxshi" (boshqa yerdan olaman, ular yaxshiroq):
+- Raqobatchini yomonlama
+- "Har kim o'z yo'lida. Bizda [marka] bor, kerak bo'lsa qaytib keling." de
 
 BANK O'TKAZMA SO'RASA (mijoz "bank o'tkazma", "plastik", "karta", "o'tkazma" so'zlarini ishlatsa):
 - "Aniqlab beraman" de, keyin yangi qatorda:
@@ -635,7 +652,7 @@ def has_valid_phone(text: str) -> bool:
 TOLOV_KEY = "To’lov"
 
 _INTERNAL_MARKERS = (
-    "ISSIQ_LID", "ISM:", "SOHA:", "NARX_KELISHUV:", "NARX_KUTILMOQDA:",
+    "ISSIQ_LID", "ISM:", "SOHA:", "ETIROZ:", "NARX_KELISHUV:", "NARX_KUTILMOQDA:",
     "BANK_NARX_KUTILMOQDA:", "NOMA_LUM_MARKA:", "TEXNIK SAVOL:",
 )
 
@@ -657,6 +674,18 @@ def parse_response(response: str) -> tuple[str, dict]:
             }
             raw_soha = line.strip().split(":", 1)[1].strip().lower().replace(" ", "_")
             markers["soha"] = raw_soha if raw_soha in _valid_sohalar else "boshqa"
+        elif upper.startswith("ETIROZ:"):
+            value = line.strip().split(":", 1)[1].strip()
+            parts = [p.strip() for p in value.split("|", 1)]
+            _valid_etirozlar = {
+                "narx_baland", "boshqa_joyda_arzon",
+                "hozir_kerak_emas", "boshqa_servis_yaxshi", "boshqa"
+            }
+            tur = parts[0].lower() if parts else "boshqa"
+            markers["etiroz"] = {
+                "tur": tur if tur in _valid_etirozlar else "boshqa",
+                "matn": parts[1] if len(parts) > 1 else "",
+            }
         elif upper.startswith("NARX_KUTILMOQDA:"):
             value = line.strip().split(":", 1)[1].strip()
             parts = [p.strip() for p in value.split("|")]
@@ -1153,6 +1182,15 @@ async def _handle_message(event):
                 soha=markers["soha"], soha_aniqlangan_avtomatik=True
             ))
 
+    if "etiroz" in markers and _DB_OK:
+        asyncio.create_task(asyncio.to_thread(
+            _db.add_etiroz,
+            sender_id,
+            markers["etiroz"]["tur"],
+            markers["etiroz"]["matn"],
+            clients_db.get(sender_id, {}).get("last_buyurtma_id"),
+        ))
+
     if "issiq_lid" in markers:
         phone = extract_phone(text) if has_valid_phone(text) else "?"
         await event.respond("Rahmat, tez orada bog'lanamiz.")
@@ -1184,6 +1222,8 @@ async def _handle_message(event):
                 lid_details.get("Miqdor", "?"),
                 clients_db[sender_id].get("soha"),
             )
+        if buyurtma_id:
+            clients_db[sender_id]["last_buyurtma_id"] = buyurtma_id
         card = build_lead_card(sender_id, phone, response, buyurtma_id)
         await client.send_message(BOSS_CHAT_ID, card)
         logger.info(f"Issiq lid BOSS ga yuborildi: {clients_db[sender_id].get('name', sender_id)} tel={phone} buyurtma_id={buyurtma_id}")
@@ -1393,7 +1433,7 @@ async def follow_up_checker():
                     except Exception as e:
                         logger.error(f"20:00 kutilmoqda xabar xato: {e}")
 
-                # Xabar 2: bugungi sotuv hisoboti
+                # Xabar 2: bugungi sotuv hisoboti + e'tirozlar
                 sotuv = await asyncio.to_thread(_db.get_bugungi_sotuv)
                 if sotuv:
                     lines = [f"Bugungi sotuv ({now.strftime('%d.%m.%Y')}):\n"]
@@ -1405,6 +1445,13 @@ async def follow_up_checker():
                             f"{r['marka']}: {int(kg):,} kg ({r['buyurtmalar_soni']} ta)".replace(",", " ")
                         )
                     lines.append(f"\nJami: {int(jami):,} kg".replace(",", " "))
+                    if _DB_OK:
+                        etirozlar = await asyncio.to_thread(_db.get_etirozlar_taqsimoti)
+                        bugun_etirozlar = [r for r in etirozlar if r.get("bugungi", 0)]
+                        if bugun_etirozlar:
+                            lines.append("\nE'tirozlar (bugun):")
+                            for r in bugun_etirozlar:
+                                lines.append(f"  {r['etiroz_turi']}: {r['bugungi']} ta")
                     try:
                         await client.send_message(BOSS_CHAT_ID, "\n".join(lines))
                     except Exception as e:
@@ -1524,6 +1571,12 @@ async def reporter():
                             f"{r['marka']}: {int(kg):,} kg ({r['buyurtmalar_soni']} ta)".replace(",", " ")
                         )
                     lines.append(f"\nJami: {int(jami):,} kg".replace(",", " "))
+                    etirozlar = await asyncio.to_thread(_db.get_etirozlar_taqsimoti)
+                    hafta_etirozlar = [r for r in etirozlar if r.get("haftalik", 0)]
+                    if hafta_etirozlar:
+                        lines.append("\nE'tirozlar (so'nggi 7 kun):")
+                        for r in hafta_etirozlar:
+                            lines.append(f"  {r['etiroz_turi']}: {r['haftalik']} ta")
                     try:
                         await client.send_message(BOSS_CHAT_ID, "\n".join(lines))
                     except Exception as e:
@@ -1542,6 +1595,12 @@ async def reporter():
                         f"{r['marka']}: {int(kg):,} kg ({r['buyurtmalar_soni']} ta)".replace(",", " ")
                     )
                 lines.append(f"\nJami: {int(jami):,} kg".replace(",", " "))
+                etirozlar = await asyncio.to_thread(_db.get_etirozlar_taqsimoti)
+                oy_etirozlar = [r for r in etirozlar if r.get("oylik", 0)]
+                if oy_etirozlar:
+                    lines.append("\nE'tirozlar (so'nggi 30 kun):")
+                    for r in oy_etirozlar:
+                        lines.append(f"  {r['etiroz_turi']}: {r['oylik']} ta")
                 try:
                     await client.send_message(BOSS_CHAT_ID, "\n".join(lines))
                 except Exception as e:
