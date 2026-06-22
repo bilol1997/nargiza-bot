@@ -1248,6 +1248,8 @@ async def _handle_message(event):
         telefon_db = lid_details.get("Telefon", "").strip()
         if not telefon_db and phone != "?":
             telefon_db = phone
+        if telefon_db:
+            clients_db.setdefault(sender_id, {})["telefon"] = telefon_db
         buyurtma_id = None
         if _DB_OK:
             buyurtma_id = await asyncio.to_thread(
