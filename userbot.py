@@ -1327,6 +1327,107 @@ async def _handle_message(event):
 
 # ── Guruh e'lonlari ────────────────────────────────────────────────────────────
 
+_ELON_SHABLON = """\
+Polietilen
+
+0220 - {0220}
+0320 - {0320}
+0525 - {0525}
+
+22b02 - {22b02}
+2102 repack - {2102 repack}
+2102 original - {2102 original}
+2119 original - {2119 original}
+2119 xitoy - {2119 xitoy}
+0209 xitoy - {0209 xitoy}
+
+Sibur 30200 - {Sibur 30200}
+Sibur 153 - {Sibur 153}
+
+1561 - {1561}
+1561 (2sort) - {1561 (2sort)}
+0760 - {0760}
+52518 repack - {52518 repack}
+J2210 - {J2210}
+J2200 - {J2200}
+2560 - {2560}
+
+Ilam 7000 original - {Ilam 7000 original}
+5100 (xitoy 7000) - {5100 (xitoy 7000)}
+
+342 - {342}
+Py456 - {Py456}
+Pe100 Jam repack - {Pe100 Jam repack}
+Pe100 Jam original - {Pe100 Jam original}
+
+Bl3 repack - {Bl3 repack}
+By460 - {By460}
+By456 - {By456}
+
+Polipropilen
+
+J150 - {J150}
+J160 - {J160}
+J350 - {J350}
+J360 - {J360}
+J550 - {J550}
+J560 - {J560}
+J570 - {J570}
+
+Jm370 - {Jm370}
+Jm375 - {Jm375}
+
+Y130 - {Y130}
+Fo130 - {Fo130}
+Sibur 030 - {Sibur 030}
+Xitoy 1003 🔴 - {Xitoy 1003 🔴}
+Xitoy 1003 🔵 - {Xitoy 1003 🔵}
+Fr170 - {Fr170}
+
+Sibx ppr 003 - {Sibx ppr 003}
+Ppr 4401 xitoy - {Ppr 4401 xitoy}
+Ppr 200 - {Ppr 200}
+
+Gpps 1551 - {Gpps 1551}
+Gpps 1551 repack - {Gpps 1551 repack}
+Gpps 500 xitoy - {Gpps 500 xitoy}
+
+Abs 121 LG - {Abs 121 LG}
+Abs GP 35 - {Abs GP 35}
+Abs Kunlun Xitoy - {Abs Kunlun Xitoy}
+
+Polistirol 7420 - {Polistirol 7420}
+Polistirol 1540 - {Polistirol 1540}
+Polistirol 4512 - {Polistirol 4512}
+
+Pvx Xitoy - {Pvx Xitoy}
+Pvx Navoiy azot sg3 - {Pvx Navoiy azot sg3}
+Pvx Navoiy azot sg5 - {Pvx Navoiy azot sg5}"""
+
+
+def build_elon_text() -> str:
+    lines_out = []
+    for raw_line in _ELON_SHABLON.splitlines():
+        brace_start = raw_line.find("{")
+        brace_end   = raw_line.find("}")
+        if brace_start != -1 and brace_end != -1:
+            key  = raw_line[brace_start + 1:brace_end]
+            narx = current_prices.get(key) or current_prices.get(key.lower())
+            if narx is None:
+                continue
+            lines_out.append(raw_line[:brace_start] + str(int(narx)))
+        else:
+            lines_out.append(raw_line)
+    result, prev_blank = [], False
+    for ln in lines_out:
+        is_blank = ln.strip() == ""
+        if is_blank and prev_blank:
+            continue
+        result.append(ln)
+        prev_blank = is_blank
+    return "\n".join(result).strip()
+
+
 async def get_all_groups() -> list:
     groups = []
     async for dialog in client.iter_dialogs():
@@ -1342,7 +1443,10 @@ async def send_to_all_groups():
     if not current_prices:
         logger.info("Hali narx kiritilmagan, e'lon yuborilmadi.")
         return
-    price_text = "\n".join(f"{k}: {v:,} so'm/kg" for k, v in current_prices.items())
+    price_text = build_elon_text()
+    if not price_text:
+        logger.info("Narxlar to'ldirilmagan, e'lon yuborilmadi.")
+        return
     groups = await get_all_groups()
     if not groups:
         logger.warning("Hech qanday guruh topilmadi.")
