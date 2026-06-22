@@ -1199,15 +1199,36 @@ async def _handle_message(event):
             ))
 
     if "etiroz" in markers and _DB_OK:
-        asyncio.create_task(asyncio.to_thread(
+        e = markers["etiroz"]
+        await asyncio.to_thread(
             _db.add_etiroz,
             sender_id,
-            markers["etiroz"]["tur"],
-            markers["etiroz"]["matn"],
+            e["tur"],
+            e["matn"],
             clients_db.get(sender_id, {}).get("last_buyurtma_id"),
-            markers["etiroz"].get("raqib_nomi"),
-            markers["etiroz"].get("raqib_narxi"),
-        ))
+            e.get("raqib_nomi"),
+            e.get("raqib_narxi"),
+        )
+        if e.get("raqib_nomi"):
+            mijoz     = clients_db.get(sender_id, {})
+            ism       = mijoz.get("name") or str(sender_id)
+            tel       = mijoz.get("telefon") or "?"
+            marka     = mijoz.get("last_marka") or "?"
+            narx_qism = (
+                f"{int(e['raqib_narxi']):,} so'm".replace(",", " ")
+                if e.get("raqib_narxi") else "noma'lum"
+            )
+            alert = (
+                f"⚠️ RAQOBATCHI ANIQLANDI\n"
+                f"Mijoz: {ism} ({tel})\n"
+                f"Marka: {marka}\n"
+                f"Raqobatchi: {e['raqib_nomi']} — {narx_qism}\n"
+                f"Mijoz so'zi: {e['matn']}"
+            )
+            try:
+                await client.send_message(BOSS_CHAT_ID, alert)
+            except Exception as exc:
+                logger.error(f"Raqobatchi ogohlantirish xato: {exc}")
 
     if "issiq_lid" in markers:
         phone = extract_phone(text) if has_valid_phone(text) else "?"
