@@ -67,6 +67,7 @@ clients_db: dict = {}           # {chat_id: {"name": ..., "telegram": ...}}
 pending_price_requests: dict = {}        # {customer_id: {"marka": str, "miqdor": str}}
 pending_bank_requests: dict = {}         # {customer_id: {"marka": str, "miqdor": str}}
 pending_price_negotiations: dict = {}    # {customer_id: {"marka": str, "taklif": str, "asl": str}}
+pending_intent: dict = {}  # {boss_sender_id: {"niyat":..., "parametrlar":..., "ts":...}}
 
 FOLLOW_UPS_FILE  = "follow_ups.json"
 PRICES_FILE      = "current_prices.json"
@@ -608,6 +609,38 @@ def match_marka(stored: str, parsed: dict):
     return None, None
 
 
+_INTENT_SYSTEM = """\
+Petro Plast savdo botining buyruq analizatorisin.
+BOSS xabarini tahlil qilib, FAQAT quyidagi JSON formatida qaytaring (boshqa hech narsa yozma):
+{"niyat": "<tur>", "parametrlar": {...}}
+
+Niyat turlari:
+- "narx_yangilash": {"marka": "<marka nomi>", "narx": <son>}
+  Misol: "1561 narxi 16500 boldi" -> {"niyat":"narx_yangilash","parametrlar":{"marka":"1561","narx":16500}}
+- "noma_lum": {}
+
+Faqat narx yangilash niyatini aniqla. Boshqa har qanday xabar uchun "noma_lum" qaytaring."""
+
+
+async def intent_router(text: str) -> dict:
+    """Claude Haiku orqali BOSS xabaridan niyat aniqlanadi (qattiq format mos kelmasa fallback)."""
+    def _sync_call():
+        return claude.messages.create(
+            model="claude-haiku-4-5-20251001",
+            max_tokens=120,
+            system=_INTENT_SYSTEM,
+            messages=[{"role": "user", "content": text}],
+        )
+    try:
+        resp = await asyncio.to_thread(_sync_call)
+        raw = resp.content[0].text.strip()
+        logger.info(f"intent_router natija: {raw}")
+        return json.loads(raw)
+    except Exception as e:
+        logger.error(f"intent_router xato: {e}")
+        return {"niyat": "noma_lum", "parametrlar": {}}
+
+
 def parse_price_list(text: str) -> dict:
     prices = {}
     for line in text.strip().split("\n"):
@@ -844,6 +877,33 @@ async def _handle_message(event):
 
         if not text:
             return
+
+        # ── Pending intent tasdiq (Ha/Yo'q) ──────────────────────────────
+        pending = pending_intent.get(sender_id)
+        if pending:
+            age = time.time() - pending.get("ts", 0)
+            low = text.strip().lower()
+            if age > 300:
+                pending_intent.pop(sender_id, None)
+            elif low in ("ha", "ha.", "yes", "ok", "+"):
+                pending_intent.pop(sender_id, None)
+                if pending["niyat"] == "narx_yangilash":
+                    marka = pending["parametrlar"]["marka"]
+                    narx = pending["parametrlar"]["narx"]
+                    current_prices[marka] = narx
+                    if _DB_OK:
+                        asyncio.create_task(asyncio.to_thread(_db.upsert_narx, marka, narx))
+                    else:
+                        asyncio.create_task(asyncio.to_thread(_save_prices))
+                    logger.info(f"Narx yangilandi (intent_router): {marka} = {narx}")
+                    await event.respond(f"{marka} narxi {narx:,} ga o'rnatildi.".replace(",", " "))
+                return
+            elif low in ("yo'q", "yoq", "no", "bekor", "-"):
+                pending_intent.pop(sender_id, None)
+                await event.respond("Bekor qilindi.")
+                return
+            else:
+                pending_intent.pop(sender_id, None)
 
         # BOSS "+998901234567 Sardor aka" formatida sovuq lid yubordi
         cold_match = re.match(r'^(\+?\d{9,13})\s+(.+)$', text.strip())
@@ -1100,12 +1160,33 @@ async def _handle_message(event):
                     logger.error(f"Narx yuborishda xato ({customer_id}): {e}")
 
         if parsed_prices:
-            current_prices.clear()
             current_prices.update(parsed_prices)
-            asyncio.create_task(asyncio.to_thread(_save_prices))
+            if _DB_OK:
+                for _m, _n in parsed_prices.items():
+                    asyncio.create_task(asyncio.to_thread(_db.upsert_narx, _m, _n))
+            else:
+                asyncio.create_task(asyncio.to_thread(_save_prices))
             price_lines = "\n".join(f"{k}: {v:,}" for k, v in parsed_prices.items())
             await event.respond(f"Narxlar saqlandi:\n{price_lines}")
             logger.info(f"Narxlar yangilandi va saqlandi: {parsed_prices}")
+        else:
+            result = await intent_router(text)
+            if result.get("niyat") == "narx_yangilash":
+                p = result.get("parametrlar", {})
+                marka = str(p.get("marka", "")).strip()
+                try:
+                    narx = int(p.get("narx", 0))
+                except (TypeError, ValueError):
+                    narx = 0
+                if marka and narx > 0:
+                    pending_intent[sender_id] = {
+                        "niyat": "narx_yangilash",
+                        "parametrlar": {"marka": marka, "narx": narx},
+                        "ts": time.time(),
+                    }
+                    await event.respond(
+                        f"{marka} narxini {narx:,} ga o'zgartiraymi? Ha/Yo'q".replace(",", " ")
+                    )
         notified_str = ", ".join(notified) if notified else "yo'q"
         logger.info(f"BOSS narx xabari. Yangi: {len(parsed_prices)} ta. Xabardor: {notified_str}")
         return
@@ -1776,7 +1857,11 @@ async def main():
     global clients_db, follow_ups, current_prices
     follow_ups = _load_follow_ups()
     logger.info(f"Follow-ups yuklandi: {len(follow_ups)} ta")
-    current_prices = _load_prices()
+    if _DB_OK:
+        current_prices = _db.get_all_narxlar()
+        logger.info(f"Narxlar Supabase'dan yuklandi: {len(current_prices)} ta")
+    else:
+        current_prices = _load_prices()
     logger.info(f"Narxlar yuklandi: {len(current_prices)} ta marka")
     if _SHEETS_ID and _GC_RAW:
         token = _get_sheets_token()

@@ -369,3 +369,26 @@ def get_kutilmoqda_buyurtmalar() -> list:
     except Exception as e:
         logger.error(f"get_kutilmoqda_buyurtmalar xato: {e}")
         return []
+
+
+# ── Narxlar ───────────────────────────────────────────────────────────────────
+
+def get_all_narxlar() -> dict:
+    """Barcha joriy narxlarni {marka: narx} ko'rinishida qaytaradi."""
+    try:
+        res = _client().table("narxlar").select("marka, narx").execute()
+        return {row["marka"]: row["narx"] for row in res.data}
+    except Exception as e:
+        logger.error(f"get_all_narxlar xato: {e}")
+        return {}
+
+
+def upsert_narx(marka: str, narx: float) -> None:
+    """Bitta mahsulot narxini Supabase'da yangilaydi yoki qo'shadi."""
+    try:
+        _client().table("narxlar").upsert(
+            {"marka": marka, "narx": narx, "yangilangan_vaqt": datetime.now(timezone.utc).isoformat()},
+            on_conflict="marka",
+        ).execute()
+    except Exception as e:
+        logger.error(f"upsert_narx xato ({marka}): {e}")
