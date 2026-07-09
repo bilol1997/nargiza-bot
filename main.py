@@ -322,6 +322,34 @@ current_prices = {}
 pending_price_negotiations = {}
 pending_price_requests = {}
 
+_INTENT_SYSTEM = """\
+Petro Plast savdo botining buyruq analizatorisin.
+BOSS xabarini tahlil qilib, FAQAT quyidagi JSON formatida qaytaring (boshqa hech narsa yozma):
+{"niyat": "<tur>", "parametrlar": {...}}
+
+Niyat turlari:
+- "narx_yangilash": {"marka": "<marka nomi>", "narx": <son>}
+  Misol: "1561 narxi 16500 boldi" -> {"niyat":"narx_yangilash","parametrlar":{"marka":"1561","narx":16500}}
+- "noma_lum": {}
+
+Faqat narx yangilash niyatini aniqla. Boshqa har qanday xabar uchun "noma_lum" qaytaring."""
+
+
+async def intent_router(text: str) -> dict:
+    """Claude Haiku orqali BOSS xabaridan niyat aniqlanadi."""
+    try:
+        resp = claude_client.messages.create(
+            model="claude-haiku-4-5-20251001",
+            max_tokens=120,
+            system=_INTENT_SYSTEM,
+            messages=[{"role": "user", "content": text}],
+        )
+        raw = resp.content[0].text.strip()
+        return json.loads(raw)
+    except Exception as e:
+        logger.error(f"intent_router xato: {e}")
+        return {"niyat": "noma_lum", "parametrlar": {}}
+
 FOLLOW_UPS_FILE = "follow_ups_bot.json"
 follow_ups: list = []
 context_store: dict = {}  # kunlik hisobot va boshqa bir martalik flaglar uchun
@@ -1155,6 +1183,52 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
             pending_price_negotiations.pop(customer_id, None)
             await update.message.reply_text("Mijozga yakuniy narx yuborildi.")
             return
+
+        # ── Pending intent tasdiq (Ha/Yo'q) ──────────────────────────────────
+        pending = context.user_data.get("pending_intent")
+        if pending:
+            age = time.time() - pending.get("ts", 0)
+            if age > 300:
+                context.user_data.pop("pending_intent", None)
+                await update.message.reply_text("Vaqt o'tdi, amal bekor qilindi.")
+                return
+            if low in ("ha", "ha.", "yes", "ok", "+"):
+                context.user_data.pop("pending_intent", None)
+                niyat = pending["niyat"]
+                if niyat == "narx_yangilash":
+                    marka = pending["parametrlar"]["marka"]
+                    narx  = pending["parametrlar"]["narx"]
+                    current_prices[marka] = narx
+                    logger.info(f"Narx yangilandi: {marka} = {narx}")
+                    await update.message.reply_text(
+                        f"{marka} narxi {narx:,} ga o\\'rnatildi.".replace(",", " ")
+                    )
+                return
+            if low in ("yo'q", "yoq", "no", "bekor", "-"):
+                context.user_data.pop("pending_intent", None)
+                await update.message.reply_text("Bekor qilindi.")
+                return
+            context.user_data.pop("pending_intent", None)
+
+        # ── Intent router: narx yangilash ─────────────────────────────────────
+        result = await intent_router(text)
+        if result.get("niyat") == "narx_yangilash":
+            p = result.get("parametrlar", {})
+            marka = str(p.get("marka", "")).strip()
+            try:
+                narx = int(p.get("narx", 0))
+            except (TypeError, ValueError):
+                narx = 0
+            if marka and narx > 0:
+                context.user_data["pending_intent"] = {
+                    "niyat": "narx_yangilash",
+                    "parametrlar": {"marka": marka, "narx": narx},
+                    "ts": time.time(),
+                }
+                await update.message.reply_text(
+                    f"{marka} narxini {narx:,} ga o\\'zgartiraymi? Ha/Yo\\'q".replace(",", " ")
+                )
+                return
 
         return
 
