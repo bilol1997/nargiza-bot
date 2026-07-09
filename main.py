@@ -986,6 +986,7 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
     text = update.message.text
 
     if is_boss(chat_id):
+        logger.info(f"handle_text BOSS: xabar keldi -> {text!r}")
         low = text.lower().strip()
 
         # "<id> sotildi [miqdor]" yoki "<id> sotilmadi"
@@ -1214,6 +1215,7 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
             context.user_data.pop("pending_intent", None)
 
         # ── Intent router: narx yangilash ─────────────────────────────────────
+        logger.info(f"handle_text BOSS: intent_router ga yetdi -> {text!r}")
         result = await intent_router(text)
         if result.get("niyat") == "narx_yangilash":
             p = result.get("parametrlar", {})
