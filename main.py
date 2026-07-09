@@ -337,14 +337,17 @@ Faqat narx yangilash niyatini aniqla. Boshqa har qanday xabar uchun "noma_lum" q
 
 async def intent_router(text: str) -> dict:
     """Claude Haiku orqali BOSS xabaridan niyat aniqlanadi."""
-    try:
-        resp = claude_client.messages.create(
+    def _sync_call():
+        return claude_client.messages.create(
             model="claude-haiku-4-5-20251001",
             max_tokens=120,
             system=_INTENT_SYSTEM,
             messages=[{"role": "user", "content": text}],
         )
+    try:
+        resp = await asyncio.to_thread(_sync_call)
         raw = resp.content[0].text.strip()
+        logger.info(f"intent_router natija: {raw}")
         return json.loads(raw)
     except Exception as e:
         logger.error(f"intent_router xato: {e}")
