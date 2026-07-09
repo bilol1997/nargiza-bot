@@ -984,6 +984,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
     chat_id = update.effective_chat.id
     text = update.message.text
+    logger.info(f"handle_text CHAQIRILDI: chat_id={chat_id}, BOSS_CHAT_ID={BOSS_CHAT_ID}, is_boss={is_boss(chat_id)}, text={text!r}")
 
     if is_boss(chat_id):
         logger.info(f"handle_text BOSS: xabar keldi -> {text!r}")
