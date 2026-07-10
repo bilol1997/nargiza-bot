@@ -392,3 +392,50 @@ def upsert_narx(marka: str, narx: float) -> None:
         ).execute()
     except Exception as e:
         logger.error(f"upsert_narx xato ({marka}): {e}")
+
+
+def get_kanonik_markalar() -> list:
+    """Barcha kanonik marka nomlarini ro'yxat sifatida qaytaradi."""
+    try:
+        res = _client().table("kanonik_markalar").select("nom, bolim").order("bolim, tartib").execute()
+        return res.data
+    except Exception as e:
+        logger.error(f"get_kanonik_markalar xato: {e}")
+        return []
+
+
+def get_alias(alias: str):
+    """Berilgan alias uchun kanonik nomni qaytaradi, topilmasa None."""
+    try:
+        res = _client().table("marka_aliaslar").select("kanonik_nom").eq("alias", alias).limit(1).execute()
+        return res.data[0]["kanonik_nom"] if res.data else None
+    except Exception as e:
+        logger.error(f"get_alias xato: {e}")
+        return None
+
+
+def upsert_alias(alias: str, kanonik_nom: str) -> None:
+    try:
+        _client().table("marka_aliaslar").upsert(
+            {"alias": alias, "kanonik_nom": kanonik_nom}, on_conflict="alias"
+        ).execute()
+    except Exception as e:
+        logger.error(f"upsert_alias xato: {e}")
+
+
+def get_soz_sinonimlar() -> dict:
+    try:
+        res = _client().table("soz_sinonimlar").select("variant, kanonik").execute()
+        return {row["variant"]: row["kanonik"] for row in res.data}
+    except Exception as e:
+        logger.error(f"get_soz_sinonimlar xato: {e}")
+        return {}
+
+
+def insert_kanonik_marka(nom: str, bolim: str) -> None:
+    try:
+        _client().table("kanonik_markalar").upsert(
+            {"nom": nom, "bolim": bolim}, on_conflict="nom"
+        ).execute()
+    except Exception as e:
+        logger.error(f"insert_kanonik_marka xato: {e}")

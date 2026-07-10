@@ -67,7 +67,10 @@ clients_db: dict = {}           # {chat_id: {"name": ..., "telegram": ...}}
 pending_price_requests: dict = {}        # {customer_id: {"marka": str, "miqdor": str}}
 pending_bank_requests: dict = {}         # {customer_id: {"marka": str, "miqdor": str}}
 pending_price_negotiations: dict = {}    # {customer_id: {"marka": str, "taklif": str, "asl": str}}
-pending_intent: dict = {}  # {boss_sender_id: {"niyat":..., "parametrlar":..., "ts":...}}
+pending_intent: dict = {}  # {boss_sender_id: {"queue": [...], "ts":...}}
+kanonik_markalar_ro: list = []   # [{"nom":..., "bolim":...}, ...]
+soz_sinonimlar_ro: dict = {}     # {"kampaund": "compound", ...}
+alias_cache: dict = {}           # {"normallashtirilgan alias": "Kanonik Nom", ...}
 
 FOLLOW_UPS_FILE  = "follow_ups.json"
 PRICES_FILE      = "current_prices.json"
@@ -641,6 +644,81 @@ async def intent_router(text: str) -> dict:
         return {"niyat": "noma_lum", "parametrlar": {}}
 
 
+def normalize_marka(raw: str) -> str:
+    """So'z sinonimlari va sort naqshlarini qo'llab, matnni taqqoslash uchun normallashtiradi."""
+    text = raw.strip().lower()
+    text = re.sub(r'\(\s*1\s*\)', '(1sort)', text)
+    text = re.sub(r'\(\s*2\s*\)', '(2sort)', text)
+    text = re.sub(r'\b1\s*-?\s*sort\b', '(1sort)', text)
+    text = re.sub(r'\b2\s*-?\s*sort\b', '(2sort)', text)
+    words = text.split()
+    words = [soz_sinonimlar_ro.get(w, w) for w in words]
+    return " ".join(words)
+
+
+async def resolve_marka(raw_marka: str) -> dict:
+    """
+    Marka nomini kanonik ro'yxatga moslashtiradi.
+    Qaytaradi: {"status": "aniq"|"taklif"|"yangi", "kanonik": str|None}
+    """
+    norm = normalize_marka(raw_marka)
+
+    for item in kanonik_markalar_ro:
+        if normalize_marka(item["nom"]) == norm:
+            return {"status": "aniq", "kanonik": item["nom"]}
+
+    cached = alias_cache.get(norm)
+    if cached:
+        return {"status": "aniq", "kanonik": cached}
+    if _DB_OK:
+        db_alias = await asyncio.to_thread(_db.get_alias, norm)
+        if db_alias:
+            alias_cache[norm] = db_alias
+            return {"status": "aniq", "kanonik": db_alias}
+
+    nomlar_royxati = "\n".join(item["nom"] for item in kanonik_markalar_ro)
+    system = f"""Quyidagi ro'yxatdan foydalanuvchi yozgan mahsulot nomiga ENG YAQIN mos kelgan nomni top.
+Ro'yxat:
+{nomlar_royxati}
+
+Foydalanuvchi yozgan nom ro'yxatdagi biror nomga mos kelsa (imlo xatosi, qisqartma, so'z tartibi farqi bo'lsa ham), FAQAT shu JSON'ni qaytar:
+{{"topildi": true, "kanonik": "<ro'yxatdagi aniq nom>"}}
+
+Agar ro'yxatda mos keladigan HECH NARSA bo'lmasa (butunlay yangi mahsulot):
+{{"topildi": false, "kanonik": null}}
+
+Boshqa hech narsa yozma, faqat JSON."""
+    try:
+        def _sync_call():
+            return claude.messages.create(
+                model="claude-haiku-4-5-20251001",
+                max_tokens=150,
+                system=system,
+                messages=[{"role": "user", "content": raw_marka}],
+            )
+        resp = await asyncio.to_thread(_sync_call)
+        raw_json = resp.content[0].text.strip()
+        result = json.loads(raw_json)
+        if result.get("topildi") and result.get("kanonik"):
+            return {"status": "taklif", "kanonik": result["kanonik"]}
+        return {"status": "yangi", "kanonik": None}
+    except Exception as e:
+        logger.error(f"resolve_marka xato: {e}")
+        return {"status": "yangi", "kanonik": None}
+
+
+async def _ask_pending_item(event, item):
+    narx = item["narx"]
+    if item["status"] == "taklif":
+        await event.respond(
+            f"'{item['raw']}' — bu '{item['taklif_kanonik']}' emasmi? Tasdiqlasam, narxini {narx:,} ga o'rnataman. Ha/Yo'q".replace(",", " ")
+        )
+    else:
+        await event.respond(
+            f"'{item['raw']}' kanonik ro'yxatda yo'q. Yangi mahsulot sifatida qo'shib, narxini {narx:,} ga o'rnataymi? Ha/Yo'q".replace(",", " ")
+        )
+
+
 def parse_price_list(text: str) -> dict:
     prices = {}
     for line in text.strip().split("\n"):
@@ -878,7 +956,7 @@ async def _handle_message(event):
         if not text:
             return
 
-        # ── Pending intent tasdiq (Ha/Yo'q) ──────────────────────────────
+        # ── Pending intent tasdiq (Ha/Yo'q, navbat bilan) ──────────────────────
         pending = pending_intent.get(sender_id)
         if pending:
             age = time.time() - pending.get("ts", 0)
@@ -886,21 +964,42 @@ async def _handle_message(event):
             if age > 300:
                 pending_intent.pop(sender_id, None)
             elif low in ("ha", "ha.", "yes", "ok", "+"):
-                pending_intent.pop(sender_id, None)
-                if pending["niyat"] == "narx_yangilash":
-                    marka = pending["parametrlar"]["marka"]
-                    narx = pending["parametrlar"]["narx"]
-                    current_prices[marka] = narx
+                queue = pending.get("queue", [])
+                if queue:
+                    item = queue.pop(0)
+                    kanonik = item.get("taklif_kanonik") or item["raw"]
+                    narx = item["narx"]
+                    current_prices[kanonik] = narx
                     if _DB_OK:
-                        asyncio.create_task(asyncio.to_thread(_db.upsert_narx, marka, narx))
+                        asyncio.create_task(asyncio.to_thread(_db.upsert_narx, kanonik, narx))
+                        asyncio.create_task(asyncio.to_thread(_db.upsert_alias, normalize_marka(item["raw"]), kanonik))
+                        if item["status"] == "yangi":
+                            asyncio.create_task(asyncio.to_thread(_db.insert_kanonik_marka, kanonik, "Boshqa"))
+                            kanonik_markalar_ro.append({"nom": kanonik, "bolim": "Boshqa"})
+                        alias_cache[normalize_marka(item["raw"])] = kanonik
                     else:
                         asyncio.create_task(asyncio.to_thread(_save_prices))
-                    logger.info(f"Narx yangilandi (intent_router): {marka} = {narx}")
-                    await event.respond(f"{marka} narxi {narx:,} ga o'rnatildi.".replace(",", " "))
+                    logger.info(f"Narx yangilandi (resolve_marka): {kanonik} = {narx} (dan: {item['raw']!r})")
+                    await event.respond(f"{kanonik} narxi {narx:,} ga o'rnatildi.".replace(",", " "))
+                if queue:
+                    pending["queue"] = queue
+                    pending["ts"] = time.time()
+                    await _ask_pending_item(event, queue[0])
+                else:
+                    pending_intent.pop(sender_id, None)
                 return
             elif low in ("yo'q", "yoq", "no", "bekor", "-"):
-                pending_intent.pop(sender_id, None)
-                await event.respond("Bekor qilindi.")
+                queue = pending.get("queue", [])
+                if queue:
+                    queue.pop(0)
+                if queue:
+                    pending["queue"] = queue
+                    pending["ts"] = time.time()
+                    await event.respond("O'tkazib yuborildi.")
+                    await _ask_pending_item(event, queue[0])
+                else:
+                    pending_intent.pop(sender_id, None)
+                    await event.respond("Bekor qilindi.")
                 return
             else:
                 pending_intent.pop(sender_id, None)
@@ -1159,16 +1258,9 @@ async def _handle_message(event):
                 except Exception as e:
                     logger.error(f"Narx yuborishda xato ({customer_id}): {e}")
 
+        items_to_resolve = []
         if parsed_prices:
-            current_prices.update(parsed_prices)
-            if _DB_OK:
-                for _m, _n in parsed_prices.items():
-                    asyncio.create_task(asyncio.to_thread(_db.upsert_narx, _m, _n))
-            else:
-                asyncio.create_task(asyncio.to_thread(_save_prices))
-            price_lines = "\n".join(f"{k}: {v:,}" for k, v in parsed_prices.items())
-            await event.respond(f"Narxlar saqlandi:\n{price_lines}")
-            logger.info(f"Narxlar yangilandi va saqlandi: {parsed_prices}")
+            items_to_resolve = list(parsed_prices.items())
         else:
             result = await intent_router(text)
             if result.get("niyat") == "narx_yangilash":
@@ -1179,14 +1271,37 @@ async def _handle_message(event):
                 except (TypeError, ValueError):
                     narx = 0
                 if marka and narx > 0:
-                    pending_intent[sender_id] = {
-                        "niyat": "narx_yangilash",
-                        "parametrlar": {"marka": marka, "narx": narx},
-                        "ts": time.time(),
-                    }
-                    await event.respond(
-                        f"{marka} narxini {narx:,} ga o'zgartiraymi? Ha/Yo'q".replace(",", " ")
-                    )
+                    items_to_resolve = [(marka, narx)]
+
+        if items_to_resolve:
+            auto_saved = []
+            queue = []
+            for raw_marka, narx in items_to_resolve:
+                resolved = await resolve_marka(raw_marka)
+                if resolved["status"] == "aniq":
+                    kanonik = resolved["kanonik"]
+                    current_prices[kanonik] = narx
+                    if _DB_OK:
+                        asyncio.create_task(asyncio.to_thread(_db.upsert_narx, kanonik, narx))
+                    else:
+                        asyncio.create_task(asyncio.to_thread(_save_prices))
+                    auto_saved.append(f"{kanonik}: {narx:,}".replace(",", " "))
+                else:
+                    queue.append({
+                        "raw": raw_marka,
+                        "narx": narx,
+                        "status": resolved["status"],
+                        "taklif_kanonik": resolved.get("kanonik"),
+                    })
+
+            if auto_saved:
+                await event.respond("Narxlar saqlandi:\n" + "\n".join(auto_saved))
+                logger.info(f"Narxlar avtomatik saqlandi: {auto_saved}")
+
+            if queue:
+                pending_intent[sender_id] = {"queue": queue, "ts": time.time()}
+                await _ask_pending_item(event, queue[0])
+
         notified_str = ", ".join(notified) if notified else "yo'q"
         logger.info(f"BOSS narx xabari. Yangi: {len(parsed_prices)} ta. Xabardor: {notified_str}")
         return
@@ -1854,12 +1969,15 @@ async def announcer():
 # ── Main ───────────────────────────────────────────────────────────────────────
 
 async def main():
-    global clients_db, follow_ups, current_prices
+    global clients_db, follow_ups, current_prices, kanonik_markalar_ro, soz_sinonimlar_ro
     follow_ups = _load_follow_ups()
     logger.info(f"Follow-ups yuklandi: {len(follow_ups)} ta")
     if _DB_OK:
         current_prices = _db.get_all_narxlar()
+        kanonik_markalar_ro = _db.get_kanonik_markalar()
+        soz_sinonimlar_ro = _db.get_soz_sinonimlar()
         logger.info(f"Narxlar Supabase'dan yuklandi: {len(current_prices)} ta")
+        logger.info(f"Kanonik markalar yuklandi: {len(kanonik_markalar_ro)} ta")
     else:
         current_prices = _load_prices()
     logger.info(f"Narxlar yuklandi: {len(current_prices)} ta marka")
