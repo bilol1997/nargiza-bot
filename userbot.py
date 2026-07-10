@@ -1002,7 +1002,8 @@ async def _handle_message(event):
                     await event.respond("Bekor qilindi.")
                 return
             else:
-                pending_intent.pop(sender_id, None)
+                await event.respond("Iltimos, 'Ha' yoki 'Yo'q' deb javob bering (yoki 'bekor' deb yozing).")
+                return
 
         # BOSS "+998901234567 Sardor aka" formatida sovuq lid yubordi
         cold_match = re.match(r'^(\+?\d{9,13})\s+(.+)$', text.strip())
