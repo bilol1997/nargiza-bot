@@ -630,14 +630,17 @@ async def intent_router(text: str) -> dict:
     def _sync_call():
         return claude.messages.create(
             model="claude-haiku-4-5-20251001",
-            max_tokens=120,
+            max_tokens=300,
             system=_INTENT_SYSTEM,
             messages=[{"role": "user", "content": text}],
         )
     try:
         resp = await asyncio.to_thread(_sync_call)
-        raw = resp.content[0].text.strip()
-        logger.info(f"intent_router natija: {raw}")
+        raw = resp.content[0].text.strip() if resp.content else ""
+        logger.info(f"intent_router natija: {raw!r} (stop_reason={resp.stop_reason})")
+        if not raw:
+            logger.error("intent_router: model bo'sh javob qaytardi")
+            return {"niyat": "noma_lum", "parametrlar": {}}
         return json.loads(raw)
     except Exception as e:
         logger.error(f"intent_router xato: {e}")
@@ -692,7 +695,7 @@ Boshqa hech narsa yozma, faqat JSON."""
         def _sync_call():
             return claude.messages.create(
                 model="claude-haiku-4-5-20251001",
-                max_tokens=150,
+                max_tokens=300,
                 system=system,
                 messages=[{"role": "user", "content": raw_marka}],
             )
