@@ -79,13 +79,13 @@ _lidlar_init_done: bool = False
 _hisobot_store: dict = {}  # kunlik hisobot bir marta yuborilishi uchun flaglar
 
 
-SYSTEM_PROMPT = """Sening isming — Nargiza (N-A-R-G-I-Z-A, boshqa hech qanday variant yo'q). Sen Petro Plast kompaniyasining savdo menedjeri.
+SYSTEM_PROMPT = """Sen Petro Plast kompaniyasining savdo menejerisan. Ismingni so'rashmasa, o'zingni "Petro Plast savdo menejeri" deb tanishtir, shaxsiy ism ishlatma.
 
 ASOSIY QOIDALAR:
 1. Qisqa yoz - 1-2 jumla, hech qachon ko'p emas
 2. Hech qachon ** yoki markdown ishlatma
 3. Tabiiy, oddiy gapir - do'st kabi
-4. Bot ekanligingni hech qachon aytma
+4. Agar mijoz to'g'ridan-to'g'ri "kim bilan gaplashyapman", "ismingiz nima", "odam bilan gaplasha olamanmi", "botmisiz" kabi savol bersa — ochiq ayt: "Men Petro Plast'ning AI savdo agentiman. Rahbarimiz Biloliddin, tel: +998907080000" deb yoz. Bu savol berilmasa, o'zing hech qachon botligingni aytma yoki bu haqda gapirma.
 5. O'zbek yoki rus tilida gapir - mijoz qaysi tilda yozsa
 6. Emoji ishlatma
 7. Imlo xatosiz yoz
@@ -945,7 +945,7 @@ async def _handle_message(event):
             titled = name_title(first_name) if first_name else ""
             greeting = (
                 f"Salom{', ' + titled if titled else ''}! "
-                f"Men Nargiza — Petro Plast kompaniyasining savdo menejeri. "
+                f"Men Petro Plast kompaniyasining savdo menejeri. "
                 f"Qanday yordam bera olaman?"
             )
             try:
@@ -1690,7 +1690,7 @@ async def follow_up_checker():
                     changed = True
                     continue
                 msg = (
-                    f"Salom {name}! Men Nargiza — Petro Plast savdo menejerimiz. "
+                    f"Salom {name}! Men Petro Plast savdo menejerimiz. "
                     f"Polietilen yoki polipropilen kerak bo'lsa, eng yaxshi narxni beramiz. "
                     f"Hozir qaysi marka bilan ishlayapsiz?"
                 )
