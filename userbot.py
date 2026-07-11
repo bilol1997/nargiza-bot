@@ -1608,26 +1608,23 @@ Pvx Navoiy azot sg5 - {Pvx Navoiy azot sg5}"""
 
 
 def build_elon_text() -> str:
+    """Guruhga e'lonni current_prices'da haqiqatda mavjud bo'lgan narxlardan
+    dinamik quradi — qotgan shablon emas, kanonik_markalar ro'yxatiga asoslanadi."""
     lines_out = []
-    for raw_line in _ELON_SHABLON.splitlines():
-        brace_start = raw_line.find("{")
-        brace_end   = raw_line.find("}")
-        if brace_start != -1 and brace_end != -1:
-            key  = raw_line[brace_start + 1:brace_end]
-            narx = current_prices.get(key) or current_prices.get(key.lower())
-            if narx is None:
-                continue
-            lines_out.append(raw_line[:brace_start] + str(int(narx)))
-        else:
-            lines_out.append(raw_line)
-    result, prev_blank = [], False
-    for ln in lines_out:
-        is_blank = ln.strip() == ""
-        if is_blank and prev_blank:
+    last_bolim = None
+    for item in kanonik_markalar_ro:
+        nom = item["nom"]
+        bolim = item.get("bolim") or "Boshqa"
+        narx = current_prices.get(nom) or current_prices.get(nom.lower())
+        if narx is None:
             continue
-        result.append(ln)
-        prev_blank = is_blank
-    return "\n".join(result).strip()
+        if bolim != last_bolim:
+            if lines_out:
+                lines_out.append("")
+            lines_out.append(bolim)
+            last_bolim = bolim
+        lines_out.append(f"{nom} - {int(narx):,}".replace(",", " "))
+    return "\n".join(lines_out).strip()
 
 
 async def get_all_groups() -> list:
