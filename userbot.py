@@ -1607,7 +1607,7 @@ Pvx Navoiy azot sg3 - {Pvx Navoiy azot sg3}
 Pvx Navoiy azot sg5 - {Pvx Navoiy azot sg5}"""
 
 
-def build_elon_text() -> str:
+def build_elon_text(prices: dict) -> str:
     """Guruhga e'lonni current_prices'da haqiqatda mavjud bo'lgan narxlardan
     dinamik quradi — qotgan shablon emas, kanonik_markalar ro'yxatiga asoslanadi."""
     lines_out = []
@@ -1615,7 +1615,7 @@ def build_elon_text() -> str:
     for item in kanonik_markalar_ro:
         nom = item["nom"]
         bolim = item.get("bolim") or "Boshqa"
-        narx = current_prices.get(nom) or current_prices.get(nom.lower())
+        narx = prices.get(nom) or prices.get(nom.lower())
         if narx is None:
             continue
         if bolim != last_bolim:
@@ -1639,10 +1639,14 @@ async def get_all_groups() -> list:
 
 
 async def send_to_all_groups():
-    if not current_prices:
-        logger.info("Hali narx kiritilmagan, e'lon yuborilmadi.")
+    if _DB_OK:
+        todays_prices = await asyncio.to_thread(_db.get_todays_narxlar)
+    else:
+        todays_prices = current_prices
+    if not todays_prices:
+        logger.info("Bugun narx kiritilmagan, e'lon yuborilmadi.")
         return
-    price_text = build_elon_text()
+    price_text = build_elon_text(todays_prices)
     if not price_text:
         logger.info("Narxlar to'ldirilmagan, e'lon yuborilmadi.")
         return

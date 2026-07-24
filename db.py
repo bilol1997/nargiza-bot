@@ -1,6 +1,8 @@
 import logging
 import os
 from datetime import datetime, timezone
+
+import pytz
 from typing import Optional
 
 from dotenv import load_dotenv
@@ -439,3 +441,17 @@ def insert_kanonik_marka(nom: str, bolim: str) -> None:
         ).execute()
     except Exception as e:
         logger.error(f"insert_kanonik_marka xato: {e}")
+
+
+def get_todays_narxlar() -> dict:
+    """Faqat BUGUN (Toshkent kuni bo'yicha) yangilangan narxlarni qaytaradi."""
+    try:
+        tz = pytz.timezone("Asia/Tashkent")
+        now = datetime.now(tz)
+        start_of_day = tz.localize(datetime(now.year, now.month, now.day, 0, 0, 0))
+        start_utc = start_of_day.astimezone(timezone.utc).isoformat()
+        res = _client().table("narxlar").select("marka, narx").gte("yangilangan_vaqt", start_utc).execute()
+        return {row["marka"]: row["narx"] for row in res.data}
+    except Exception as e:
+        logger.error(f"get_todays_narxlar xato: {e}")
+        return {}
